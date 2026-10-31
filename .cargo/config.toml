@@ -1,0 +1,13 @@
+# AURA Cargo Configuration
+# Cross-compilation settings for Android ARM64
+
+[target.aarch64-linux-android]
+linker = "/home/teto/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+ar = "/home/teto/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+
+[env]
+ANDROID_NDK_HOME = "/home/teto/Android/Sdk/ndk/27.2.12479018"
+NDK_HOME = "/home/teto/Android/Sdk/ndk/27.2.12479018"
+CC_aarch64_linux_android = "/home/teto/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+CXX_aarch64_linux_android = "/home/teto/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang++"
+AR_aarch64_linux_android = "/home/teto/Android/Sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"

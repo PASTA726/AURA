@@ -1,0 +1,19 @@
+# Rust & Cargo
+/target/
+**/*.rs.bk
+
+# Android & Gradle
+.gradle/
+build/
+*/build/
+*/*/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Scratch & Logs
+*.log
