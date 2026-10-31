@@ -85,3 +85,12 @@ Located in `/home/teto/Masaüstü/AURA/android/`:
   - Output: `android/app/build/outputs/apk/debug/app-debug.apk` (24 MB)
   - SHA-256: `f199697877b75aaa9d392cf46802445b13fb17464c9b36b797786dca1762c40f`
   - Verified internal binary: contains `lib/arm64-v8a/libaura_runtime.so` and full Compose dex hierarchy.
+
+---
+
+## 6. GitHub Repository & Alpha Release
+
+- **GitHub Repository**: https://github.com/PASTA726/AURA
+- **Alpha Release (v0.1.0-alpha)**: https://github.com/PASTA726/AURA/releases/tag/v0.1.0-alpha
+- **Attached Binary**: `AURA-v0.1.0-alpha-arm64.apk` (24 MB)
+- **Branch**: `main` (clean working directory)
