@@ -147,7 +147,18 @@ Located in `/home/teto/Masaüstü/AURA/android/`:
   `.so` copied to `android/app/src/main/jniLibs/arm64-v8a/` (31 MB debug).
 - APK: `./gradlew assembleDebug` (see §7.6 result when recorded).
 
-### 7.6 Next Steps
-- Phase 3: llama.cpp GGUF backend (real on-device inference; needs a model download with user consent).
-- Memory UI screens behind JNI accessors (inspect/wipe already exist in Rust).
-- Release flow: commit → push → tag `v0.1.1-alpha` → attach APK (asset rename vs v0.1.0 lesson: use `AURA-v0.1.1-alpha-arm64.apk`).
+### 7.6 apk Build & Release Result
+- Gradle: `BUILD SUCCESSFUL in 1m 50s` → `app-debug.apk` 34.6 MB, SHA-256
+  `3728d2f039e88dbacb4537000a914de43697ad94653eabf5294333b76915adb8`, contains
+  `lib/arm64-v8a/libaura_runtime.so` (31.8 MB debug build).
+- Commit `2c27b94` pushed; tag `v0.1.1-alpha` pushed.
+- Release: https://github.com/PASTA726/AURA/releases/tag/v0.1.1-alpha (Latest,
+  asset `AURA-v0.1.1-alpha-arm64.apk`).
+
+### 7.7 Next Steps
+- Phase 3: llama.cpp GGUF backend (real on-device inference; needs a model
+  download with user consent).
+- Memory UI screens wired behind JNI accessors (inspect/wipe already exist in
+  Rust: `count_messages`, `latest_conversation`, `wipe_messages`, `wipe_memories`).
+- Lesson for future releases: asset naming `AURA-v<ver>-alpha-arm64.apk` works
+  well; v0.1.0 shipped as plain `app-debug.apk`.
