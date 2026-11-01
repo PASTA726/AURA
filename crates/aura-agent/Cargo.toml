@@ -17,3 +17,7 @@ async-trait = { workspace = true }
 tracing = { workspace = true }
 aura-core = { path = "../aura-core" }
 aura-protocol = { path = "../aura-protocol" }
+aura-tools = { path = "../aura-tools" }
+aura-inference = { path = "../aura-inference" }
+aura-memory = { path = "../aura-memory" }
+aura-planner = { path = "../aura-planner" }

@@ -6,6 +6,13 @@ pub struct AuraConfig {
     pub timeout_secs: u64,
     pub network_enabled: bool,
     pub debug_mode: bool,
+    /// Maximum number of tool invocations permitted per user request.
+    /// Guards against uncontrolled recursive tool execution.
+    pub max_tool_calls: u32,
+    /// Wall-clock timeout applied to every individual tool execution.
+    pub tool_timeout_secs: u64,
+    /// Number of recent context messages replayed into the inference prompt.
+    pub context_history_limit: usize,
 }
 
 impl Default for AuraConfig {
@@ -15,6 +22,9 @@ impl Default for AuraConfig {
             timeout_secs: 120,
             network_enabled: false,
             debug_mode: false,
+            max_tool_calls: 10,
+            tool_timeout_secs: 30,
+            context_history_limit: 24,
         }
     }
 }

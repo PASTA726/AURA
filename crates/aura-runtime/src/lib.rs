@@ -1,30 +1,89 @@
-use aura_agent::AgentLoop;
+use std::sync::atomic::Ordering;
+
+use aura_agent::{AgentDeps, AgentLoop};
 use aura_core::{AuraConfig, AuraError};
 use aura_inference::InferenceManager;
+use aura_memory::MemoryDb;
 use aura_protocol::AgentStatus;
-use aura_tools::{DateTimeTool, DeviceInfoTool, ToolRegistry};
+use aura_tools::{DateTimeTool, DeviceInfoTool, FileSearchTool, ToolRegistry};
 
-/// Top-level coordinator that owns the agent loop, tool registry, and inference manager.
+/// Run one agent request against the runtime's components.
+async fn execute_cycle(
+    agent_loop: &mut AgentLoop,
+    inference_manager: &InferenceManager,
+    tool_registry: &ToolRegistry,
+    memory: Option<&MemoryDb>,
+    input: String,
+) -> Result<String, AuraError> {
+    let deps = AgentDeps {
+        inference: inference_manager,
+        tools: tool_registry,
+        memory,
+    };
+    agent_loop.process_input(input, &deps).await
+}
+
+/// Top-level coordinator that owns the agent loop, tool registry, inference
+/// manager, and the SQLite-backed persistent memory.
 pub struct AuraRuntime {
     pub agent_loop: AgentLoop,
     pub tool_registry: ToolRegistry,
     pub inference_manager: InferenceManager,
+    pub memory: Option<MemoryDb>,
     pub config: AuraConfig,
     pub tokio_rt: Option<tokio::runtime::Runtime>,
 }
 
 impl AuraRuntime {
+    /// Build the runtime with default config and an empty in-memory registry.
     pub fn new() -> Result<Self, AuraError> {
-        let config = AuraConfig::default();
-        let agent_loop = AgentLoop::new(config.clone());
-        let mut tool_registry = ToolRegistry::new();
+        Self::build(None, None)
+    }
 
-        // Register default built-in tools
+    /// Build the runtime with persistent SQLite memory at `db_path`.
+    pub fn with_storage(db_path: &str) -> Result<Self, AuraError> {
+        Self::build(Some(db_path), None)
+    }
+
+    /// Build the runtime with a custom config and in-process memory only.
+    pub fn with_config(config: AuraConfig) -> Result<Self, AuraError> {
+        Self::build(None, Some(config))
+    }
+
+    /// Build the runtime.
+    ///
+    /// `memory_path == None` runs memory purely in-process (useful for tests and
+    /// privacy-critical setups where nothing should touch permanent storage).
+    fn build(db_path: Option<&str>, config: Option<AuraConfig>) -> Result<Self, AuraError> {
+        let config = config.unwrap_or_default();
+        let memory = match db_path {
+            Some(path) => Some(MemoryDb::new(path)?),
+            None => Some(MemoryDb::new_in_memory()?),
+        };
+
+        let mut agent_loop = AgentLoop::new(config.clone());
+
+        // Restore the most recent conversation so chat history survives restarts.
+        if let Some(db) = &memory {
+            if let Ok(Some(conversation_id)) = db.latest_conversation() {
+                if let Ok(messages) = db.get_conversation_messages(conversation_id) {
+                    tracing::info!(
+                        messages = messages.len(),
+                        "Restored conversation history from storage"
+                    );
+                    agent_loop.restore_history(conversation_id, messages);
+                }
+            }
+        }
+
+        let mut tool_registry = ToolRegistry::new();
         tool_registry.register(DateTimeTool);
         tool_registry.register(DeviceInfoTool);
+        // File search is registered with no roots by default; runtimes grant
+        // permitted storage roots explicitly via [set_search_roots].
+        tool_registry.register(FileSearchTool::new(Vec::new()));
 
         let inference_manager = InferenceManager::new();
-
         let tokio_rt = if tokio::runtime::Handle::try_current().is_ok() {
             None
         } else {
@@ -39,31 +98,79 @@ impl AuraRuntime {
             agent_loop,
             tool_registry,
             inference_manager,
+            memory,
             config,
             tokio_rt,
         })
     }
 
+    /// Grant the file search tool the storage roots it may look into.
+    pub fn set_search_roots(&mut self, roots: Vec<std::path::PathBuf>) {
+        // Re-register to replace the previous instance.
+        self.tool_registry.register(FileSearchTool::new(roots));
+    }
+
+    /// Record that the user granted a tool permission, enabling tools whose
+    /// schema requires it.
+    pub fn grant_permission(&mut self, permission: &str) {
+        self.agent_loop
+            .granted_permissions
+            .insert(permission.to_string());
+        if let Some(memory) = &self.memory {
+            let _ = memory.log_audit("permission_granted", permission);
+        }
+    }
+
+    pub fn revoke_permission(&mut self, permission: &str) {
+        self.agent_loop.granted_permissions.remove(permission);
+        if let Some(memory) = &self.memory {
+            let _ = memory.log_audit("permission_revoked", permission);
+        }
+    }
+
     pub fn process_message(&mut self, input: &str) -> Result<String, AuraError> {
         let input_str = input.to_string();
+        // Destructure so each field is borrowed independently (needed for
+        // block_on + &mut agent_loop within the same call frame).
+        let AuraRuntime {
+            agent_loop,
+            inference_manager,
+            tool_registry,
+            memory,
+            tokio_rt,
+            ..
+        } = self;
+
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             tokio::task::block_in_place(|| {
-                handle.block_on(async {
-                    self.agent_loop.process_input(input_str).await
-                })
+                handle.block_on(execute_cycle(
+                    agent_loop,
+                    inference_manager,
+                    tool_registry,
+                    memory.as_ref(),
+                    input_str,
+                ))
             })
-        } else if let Some(ref rt) = self.tokio_rt {
-            rt.block_on(async {
-                self.agent_loop.process_input(input_str).await
-            })
+        } else if let Some(ref rt) = tokio_rt {
+            rt.block_on(execute_cycle(
+                agent_loop,
+                inference_manager,
+                tool_registry,
+                memory.as_ref(),
+                input_str,
+            ))
         } else {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .map_err(|e| AuraError::AgentError(e.to_string()))?;
-            rt.block_on(async {
-                self.agent_loop.process_input(input_str).await
-            })
+            rt.block_on(execute_cycle(
+                agent_loop,
+                inference_manager,
+                tool_registry,
+                memory.as_ref(),
+                input_str,
+            ))
         }
     }
 
@@ -72,11 +179,30 @@ impl AuraRuntime {
     }
 
     pub fn get_status(&self) -> AgentStatus {
-        if self.agent_loop.context.should_stop() {
+        if self
+            .agent_loop
+            .context
+            .emergency_stop
+            .load(Ordering::SeqCst)
+        {
+            // A stopped agent must not resume work without a restart.
             AgentStatus::Paused
         } else {
             AgentStatus::Idle
         }
+    }
+
+    /// Swap in an inference backend (tests, and future llama.cpp wiring).
+    pub fn set_inference_backend(
+        &mut self,
+        backend: impl aura_inference::InferenceBackend + 'static,
+    ) {
+        self.inference_manager = aura_inference::InferenceManager::with_backend(backend);
+    }
+
+    /// SQLite-backed memory accessor for UI screens (inspect / search / wipe).
+    pub fn memory(&self) -> Option<&MemoryDb> {
+        self.memory.as_ref()
     }
 }
 
@@ -85,6 +211,8 @@ impl Default for AuraRuntime {
         Self::new().expect("Failed to initialize default AuraRuntime")
     }
 }
+
+// ─── JNI bridge (Android feature) ─────────────────────────────────────────
 
 #[cfg(feature = "android")]
 pub mod jni_bridge {
@@ -101,6 +229,28 @@ pub mod jni_bridge {
         match AuraRuntime::new() {
             Ok(runtime) => Box::into_raw(Box::new(runtime)) as jlong,
             Err(_) => 0,
+        }
+    }
+
+    /// Initialize with a persistent SQLite database in the app's private
+    /// storage directory so conversations survive process restarts.
+    #[no_mangle]
+    pub extern "system" fn Java_app_aura_core_AuraEngine_nativeInitWithPath(
+        mut env: JNIEnv,
+        _class: JClass,
+        jpath: JString,
+    ) -> jlong {
+        let path: String = match env.get_string(&jpath) {
+            Ok(s) => s.into(),
+            Err(_) => return 0,
+        };
+        let db_path = format!("{path}/aura-memory.db");
+        match AuraRuntime::with_storage(&db_path) {
+            Ok(runtime) => Box::into_raw(Box::new(runtime)) as jlong,
+            Err(e) => {
+                tracing::error!(db = %db_path, "Runtime init failed: {e}");
+                0
+            }
         }
     }
 

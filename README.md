@@ -94,3 +94,24 @@ The resulting APK is generated at:
 - **Kill-Switch**: Instantaneous emergency stop flag polled at every reasoning iteration.
 - **No Root Required**: Built strictly atop standard Android APIs and AccessibilityServices.
 - **Tamper-Evident Audit**: Append-only SQLite audit log recording all tool actions.
+
+---
+
+## 6. Alpha Status (v0.1.1)
+
+Implemented and verified (22/22 cargo tests, zero clippy warnings):
+
+- **Real agent execution loop** (`aura-agent::AgentLoop`): reasoning → JSON action
+  protocol (`respond` / `call_tool`) → tool execution → observation → answer, with
+  hard caps on planning iterations and tool calls, plus an emergency stop checked
+  at every safe checkpoint.
+- **Tool registry sandboxing** (`aura-tools`): async execution under wall-clock
+  timeouts, JSON-schema argument validation, permission gating
+  (`android.package_launcher` for `AppLauncherTool`), `FileSearchTool` confined
+  to explicitly granted roots with traversal protection.
+- **Persistent memory** (`aura-memory`): conversations, messages, tool
+  observations and audit records in SQLite; the Android app initializes
+  `AgentEngine` with `filesDir` storage so chat history survives restarts.
+- **Model interface**: the agent loop is model-agnostic through
+  `InferenceBackend`; real GGUF inference (llama.cpp) lands in Phase 3 — until
+  then the bundled placeholder backend answers degraded but never fakes success.

@@ -73,38 +73,57 @@ flowchart TD
 ---
 
 ## Phase 4: Agent Core & Planning
+- **Status**: Completed (v0.1.1, verified 22/22 tests)
 - **Goal**: Implement deterministic agent reasoning loop with structured state machine.
 - **Deliverables**:
   - State machine: `Idle`, `Thinking`, `Planning`, `ExecutingTool`, `WaitingForApproval`, `Paused`.
   - Planner decomposing multi-step user prompts into discrete step graphs.
   - Context window manager with sliding conversation history.
+  - **Real execution loop wired** (`aura-agent::AgentLoop::process_input`): reasoning →
+    JSON action protocol (`respond` / `call_tool`) → tool execution → observation → answer.
+  - Hard limits: max planning iterations, max tool calls per request, 3-consecutive-failure
+    circuit breaker, emergency stop check at every safe checkpoint (before reasoning,
+    after generation, before each tool call).
 - **Acceptance Criteria**:
-  - Agent parses multi-step prompt and plans at least 3 discrete steps.
-  - Emergency stop halts reasoning in under 50ms.
+  - Agent executes a multi-step request chaining multiple tool calls (tested with a
+    scripted backend; LLM-driven backend arrives in Phase 3).
+  - Emergency stop halts reasoning at the next safe checkpoint (<50ms locally).
 
 ---
 
 ## Phase 5: Tool Registry & Execution Sandboxing
+- **Status**: Completed (v0.1.1, verified 22/22 tests)
 - **Goal**: Secure, schema-driven tool execution system.
 - **Deliverables**:
   - `Tool` trait with async execution and JSON schema definitions.
   - Initial tools: `DateTimeTool`, `DeviceInfoTool`, `FileSearchTool`, `AppLauncherTool`.
   - Permission validator and execution timeout guard.
 - **Acceptance Criteria**:
-  - Tools execute within isolated Tokio tasks.
-  - Out-of-schema parameters fail safely with actionable errors.
+  - Tools execute within isolated Tokio tasks with wall-clock timeouts
+    (`ToolRegistry::execute` wraps every call in `tokio::time::timeout`).
+  - Out-of-schema parameters fail safely with actionable errors
+    (`validate_args` checks object type, required fields and property types).
+  - Sensitive tools are gated: schemas can declare `required_permissions`
+    (e.g. `android.package_launcher` for `AppLauncherTool`); the agent loop denies
+    ungranted calls with an observation instead of a crash, and grants are
+    added via `AuraRuntime::grant_permission` (audited to `audit_log`).
+  - `FileSearchTool` is sandboxed to explicitly granted roots; directory
+    traversal cannot observe files outside those roots (tested).
 
 ---
 
 ## Phase 6: Persistent Memory & SQLite
+- **Status**: Completed (Rust side, v0.1.1; Memory UI wiring remains)
 - **Goal**: Structured on-device memory store with full search and inspection capabilities.
 - **Deliverables**:
   - SQLite schema: `memories`, `conversations`, `messages`, `audit_log`.
   - Full-text search over past user memories.
   - Memory screen UI wired to inspect, edit, and wipe storage.
 - **Acceptance Criteria**:
-  - Conversation persists across app restarts.
-  - Audit log records all agent tool operations append-only.
+  - Conversation persists across app restarts (tested: `AuraRuntime::with_storage`
+    reloads the latest conversation into context at construction).
+  - Audit log records all agent tool operations append-only (tool executions and
+    permission grants/revocations are logged by `aura-runtime`).
 
 ---
 

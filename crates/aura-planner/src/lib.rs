@@ -66,7 +66,10 @@ impl Plan {
     }
 
     pub fn is_complete(&self) -> bool {
-        matches!(self.status, PlanStatus::Completed | PlanStatus::Failed | PlanStatus::Cancelled)
+        matches!(
+            self.status,
+            PlanStatus::Completed | PlanStatus::Failed | PlanStatus::Cancelled
+        )
     }
 }
 

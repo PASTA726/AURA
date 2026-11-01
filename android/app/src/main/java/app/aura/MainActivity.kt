@@ -17,9 +17,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         
-        // Initialize Rust Core engine asynchronously
+        // Initialize Rust Core engine asynchronously with persistent storage,
+        // so conversations survive process restarts (SQLite under filesDir).
         thread {
-            AuraEngine.initialize()
+            AuraEngine.initialize(filesDir.absolutePath)
         }
 
         setContent {

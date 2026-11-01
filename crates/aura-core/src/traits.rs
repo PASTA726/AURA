@@ -1,7 +1,7 @@
-use async_trait::async_trait;
-use crate::error::AuraError;
-use crate::types::{Message, MemoryEntry};
 use crate::config::InferenceConfig;
+use crate::error::AuraError;
+use crate::types::{MemoryEntry, Message};
+use async_trait::async_trait;
 
 #[async_trait]
 pub trait Agent: Send + Sync {

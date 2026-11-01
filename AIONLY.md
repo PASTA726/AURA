@@ -92,5 +92,62 @@ Located in `/home/teto/Masaüstü/AURA/android/`:
 
 - **GitHub Repository**: https://github.com/PASTA726/AURA
 - **Alpha Release (v0.1.0-alpha)**: https://github.com/PASTA726/AURA/releases/tag/v0.1.0-alpha
-- **Attached Binary**: `AURA-v0.1.0-alpha-arm64.apk` (24 MB)
+- **Attached Binary**: `app-debug.apk` (24 MB, asset name corrected from earlier notes)
 - **Branch**: `main` (clean working directory)
+
+---
+
+## 7. Session Log — 2026-11-01 — Core Integration (v0.1.1)
+
+**User directive**: "Geliştir" → chosen direction: Rust core integration (Phases 4/5/6), confirmed via question round.
+
+### 7.1 Real Agent Execution Loop (`aura-agent`)
+- Replaced the placeholder `process_input` with an actual reasoning/execution cycle:
+  prompt building (protocol instructions + tool schemas + bounded history) →
+  inference → JSON action parsing (`{"action":"respond"|"call_tool"}`) → tool run →
+  observation message (role `Tool`) → loop until `respond`.
+- Hard limits: `max_iterations` (config), `max_tool_calls` (config, default 10),
+  3-consecutive-tool-failure circuit breaker, emergency stop checked at 3 safe
+  checkpoints (pre-loop, post-generation, pre-tool-call).
+- `AgentContext` gained `max_tool_calls`/`tool_calls_used`; `restore_history()`
+  loads persisted conversations; planner emits `PlanningStep` events for the UI.
+- Unparseable model output → surfaced verbatim as degraded response (never faked).
+- Permission gate: a tool's `required_permissions` must be ⊆
+  `AgentLoop.granted_permissions`, else the call is denied with an observation the
+  model can see and explain.
+
+### 7.2 Tool Registry Sandboxing (`aura-tools`)
+- `ToolRegistry::execute(id, args, timeout_secs)`: JSON-schema argument validation
+  (objects, required fields, property types) + `tokio::time::timeout` guard.
+- New `FileSearchTool`: searches granted roots only (filename + content ≤1MB,
+  depth-bounded), traversal cannot escape roots (tested).
+- New `AppLauncherTool<L: AppLauncher>`: sensitive, requires
+  `android.package_launcher` grant; the platform hook is injected as a trait.
+- `validate_args` exported for schema validation reuse.
+
+### 7.3 Persistent Memory (`aura-memory`, `aura-runtime`)
+- `MemoryDb` additions: `count_messages`, `count_conversations`,
+  `latest_conversation`, `wipe_messages`, `wipe_memories`;
+  `save_message` now upserts and touches `conversations.updated_at`.
+- `AuraRuntime` owns `MemoryDb`; constructors: `new()` (in-process), `with_storage(path)`
+  (persists), `with_config(cfg)`; restores the latest conversation at start.
+- `grant_permission` / `revoke_permission` audited to `audit_log`.
+- JNI: added `nativeInitWithPath(String)`; Kotlin `AuraEngine.initialize(storagePath)`
+  and MainActivity pass `filesDir` → conversations persist across app restarts.
+
+### 7.4 Version, Docs
+- Workspace version 0.1.0 → 0.1.1. ROADMAP phases 4/5/6 marked Completed. README
+  gained "Alpha Status (v0.1.1)" section.
+
+### 7.5 Verification Evidence
+- `cargo test --all`: **22 passed, 0 failed** (6 aura-tools, 7 aura-agent, 9 aura-runtime incl. 5 pre-existing).
+- `cargo clippy --workspace --all-targets`: **0 warnings**.
+- `cargo fmt --all` applied.
+- ARM64 rebuild: `cargo build --package aura-runtime --target aarch64-linux-android --features android` OK;
+  `.so` copied to `android/app/src/main/jniLibs/arm64-v8a/` (31 MB debug).
+- APK: `./gradlew assembleDebug` (see §7.6 result when recorded).
+
+### 7.6 Next Steps
+- Phase 3: llama.cpp GGUF backend (real on-device inference; needs a model download with user consent).
+- Memory UI screens behind JNI accessors (inspect/wipe already exist in Rust).
+- Release flow: commit → push → tag `v0.1.1-alpha` → attach APK (asset rename vs v0.1.0 lesson: use `AURA-v0.1.1-alpha-arm64.apk`).

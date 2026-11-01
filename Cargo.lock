@@ -51,12 +51,16 @@ dependencies = [
 
 [[package]]
 name = "aura-agent"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
  "aura-core",
+ "aura-inference",
+ "aura-memory",
+ "aura-planner",
  "aura-protocol",
+ "aura-tools",
  "chrono",
  "serde",
  "serde_json",
@@ -68,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "aura-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -80,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "aura-inference"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -96,7 +100,7 @@ dependencies = [
 
 [[package]]
 name = "aura-memory"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -113,7 +117,7 @@ dependencies = [
 
 [[package]]
 name = "aura-planner"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -130,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "aura-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aura-core",
  "chrono",
@@ -141,7 +145,7 @@ dependencies = [
 
 [[package]]
 name = "aura-runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -166,7 +170,7 @@ dependencies = [
 
 [[package]]
 name = "aura-tools"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -177,12 +181,13 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
+ "tracing",
  "uuid",
 ]
 
 [[package]]
 name = "aura-vision"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "aura-core",

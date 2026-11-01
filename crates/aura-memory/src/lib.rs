@@ -1,14 +1,9 @@
-use std::sync::Mutex;
 use async_trait::async_trait;
 use rusqlite::{params, Connection};
+use std::sync::Mutex;
 use uuid::Uuid;
 
-use aura_core::{
-    AuraError,
-    MemoryEntry, MemoryEntryType,
-    Message, MessageRole,
-    MemoryStore,
-};
+use aura_core::{AuraError, MemoryEntry, MemoryEntryType, MemoryStore, Message, MessageRole};
 
 pub struct MemoryDb {
     conn: Mutex<Connection>,
@@ -16,8 +11,7 @@ pub struct MemoryDb {
 
 impl MemoryDb {
     pub fn new(db_path: &str) -> Result<Self, AuraError> {
-        let conn = Connection::open(db_path)
-            .map_err(|e| AuraError::MemoryError(e.to_string()))?;
+        let conn = Connection::open(db_path).map_err(|e| AuraError::MemoryError(e.to_string()))?;
         let db = Self {
             conn: Mutex::new(conn),
         };
@@ -26,8 +20,8 @@ impl MemoryDb {
     }
 
     pub fn new_in_memory() -> Result<Self, AuraError> {
-        let conn = Connection::open_in_memory()
-            .map_err(|e| AuraError::MemoryError(e.to_string()))?;
+        let conn =
+            Connection::open_in_memory().map_err(|e| AuraError::MemoryError(e.to_string()))?;
         let db = Self {
             conn: Mutex::new(conn),
         };
@@ -36,7 +30,9 @@ impl MemoryDb {
     }
 
     fn initialize_schema(&self) -> Result<(), AuraError> {
-        let conn = self.conn.lock()
+        let conn = self
+            .conn
+            .lock()
             .map_err(|e| AuraError::MemoryError(format!("Lock error: {e}")))?;
 
         conn.execute_batch(
@@ -80,7 +76,9 @@ impl MemoryDb {
     }
 
     pub fn save_message(&self, conversation_id: Uuid, msg: &Message) -> Result<(), AuraError> {
-        let conn = self.conn.lock()
+        let conn = self
+            .conn
+            .lock()
             .map_err(|e| AuraError::MemoryError(format!("Lock error: {e}")))?;
 
         // Ensure conversation exists so FOREIGN KEY is satisfied
@@ -98,12 +96,12 @@ impl MemoryDb {
             MessageRole::Tool => "tool",
         };
 
-        let metadata_str = msg.metadata.as_ref()
-            .map(|m| m.to_string());
+        let metadata_str = msg.metadata.as_ref().map(|m| m.to_string());
 
         conn.execute(
-            "INSERT OR REPLACE INTO messages (id, conversation_id, role, content, timestamp, metadata)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO messages (id, conversation_id, role, content, timestamp, metadata)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(id) DO UPDATE SET content=?4, metadata=?6",
             params![
                 msg.id.to_string(),
                 conversation_id.to_string(),
@@ -115,30 +113,44 @@ impl MemoryDb {
         )
         .map_err(|e| AuraError::MemoryError(format!("Save message failed: {e}")))?;
 
+        // Touch the parent conversation so ordering by updated_at works.
+        conn.execute(
+            "UPDATE conversations SET updated_at = ?2 WHERE id = ?1",
+            params![conversation_id.to_string(), chrono::Utc::now().to_rfc3339()],
+        )
+        .map_err(|e| AuraError::MemoryError(format!("Touch conversation failed: {e}")))?;
+
         Ok(())
     }
 
-    pub fn get_conversation_messages(&self, conversation_id: Uuid) -> Result<Vec<Message>, AuraError> {
-        let conn = self.conn.lock()
+    pub fn get_conversation_messages(
+        &self,
+        conversation_id: Uuid,
+    ) -> Result<Vec<Message>, AuraError> {
+        let conn = self
+            .conn
+            .lock()
             .map_err(|e| AuraError::MemoryError(format!("Lock error: {e}")))?;
 
-        let mut stmt = conn.prepare(
-            "SELECT id, role, content, timestamp, metadata FROM messages
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, role, content, timestamp, metadata FROM messages
              WHERE conversation_id = ?1
              ORDER BY timestamp ASC",
-        )
-        .map_err(|e| AuraError::MemoryError(format!("Prepare failed: {e}")))?;
+            )
+            .map_err(|e| AuraError::MemoryError(format!("Prepare failed: {e}")))?;
 
-        let messages = stmt.query_map(params![conversation_id.to_string()], |row| {
-            let id_str: String = row.get(0)?;
-            let role_str: String = row.get(1)?;
-            let content: String = row.get(2)?;
-            let ts_str: String = row.get(3)?;
-            let metadata_str: Option<String> = row.get(4)?;
+        let messages = stmt
+            .query_map(params![conversation_id.to_string()], |row| {
+                let id_str: String = row.get(0)?;
+                let role_str: String = row.get(1)?;
+                let content: String = row.get(2)?;
+                let ts_str: String = row.get(3)?;
+                let metadata_str: Option<String> = row.get(4)?;
 
-            Ok((id_str, role_str, content, ts_str, metadata_str))
-        })
-        .map_err(|e| AuraError::MemoryError(format!("Query failed: {e}")))?;
+                Ok((id_str, role_str, content, ts_str, metadata_str))
+            })
+            .map_err(|e| AuraError::MemoryError(format!("Query failed: {e}")))?;
 
         let mut result = Vec::new();
         for row in messages {
@@ -164,7 +176,9 @@ impl MemoryDb {
                 .as_deref()
                 .map(serde_json::from_str)
                 .transpose()
-                .map_err(|e: serde_json::Error| AuraError::MemoryError(format!("Metadata parse: {e}")))?;
+                .map_err(|e: serde_json::Error| {
+                    AuraError::MemoryError(format!("Metadata parse: {e}"))
+                })?;
 
             result.push(Message {
                 id,
@@ -179,7 +193,9 @@ impl MemoryDb {
     }
 
     pub fn log_audit(&self, event_type: &str, description: &str) -> Result<(), AuraError> {
-        let conn = self.conn.lock()
+        let conn = self
+            .conn
+            .lock()
             .map_err(|e| AuraError::MemoryError(format!("Lock error: {e}")))?;
 
         let now = chrono::Utc::now().to_rfc3339();
@@ -191,12 +207,89 @@ impl MemoryDb {
 
         Ok(())
     }
+
+    /// Number of messages recorded in a conversation (0 if unknown conversation).
+    pub fn count_messages(&self, conversation_id: Uuid) -> Result<u64, AuraError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuraError::MemoryError(format!("Lock error: {e}")))?;
+
+        conn.query_row(
+            "SELECT COUNT(*) FROM messages WHERE conversation_id = ?1",
+            params![conversation_id.to_string()],
+            |row| row.get::<_, u64>(0),
+        )
+        .map_err(|e| AuraError::MemoryError(format!("Count failed: {e}")))
+    }
+
+    /// Total number of conversations ever recorded.
+    pub fn count_conversations(&self) -> Result<u64, AuraError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuraError::MemoryError(format!("Lock error: {e}")))?;
+
+        conn.query_row("SELECT COUNT(*) FROM conversations", [], |row| {
+            row.get::<_, u64>(0)
+        })
+        .map_err(|e| AuraError::MemoryError(format!("Count failed: {e}")))
+    }
+
+    /// Identifier of the most recently updated conversation, if any.
+    pub fn latest_conversation(&self) -> Result<Option<Uuid>, AuraError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuraError::MemoryError(format!("Lock error: {e}")))?;
+
+        let row: Option<String> = conn
+            .query_row(
+                "SELECT id FROM conversations ORDER BY updated_at DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| AuraError::MemoryError(format!("Latest conversation query: {e}")))?;
+
+        row.map(|s| {
+            Uuid::parse_str(&s).map_err(|e| AuraError::MemoryError(format!("UUID parse: {e}")))
+        })
+        .transpose()
+    }
+
+    /// Delete all chat history. Memories and audit log are preserved.
+    pub fn wipe_messages(&self) -> Result<(), AuraError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuraError::MemoryError(format!("Lock error: {e}")))?;
+
+        conn.execute("DELETE FROM messages", [])
+            .map_err(|e| AuraError::MemoryError(format!("Wipe messages failed: {e}")))?;
+        conn.execute("DELETE FROM conversations", [])
+            .map_err(|e| AuraError::MemoryError(format!("Wipe conversations failed: {e}")))?;
+        Ok(())
+    }
+
+    /// Delete all long-term memory entries (preferences, task history, etc.).
+    pub fn wipe_memories(&self) -> Result<(), AuraError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuraError::MemoryError(format!("Lock error: {e}")))?;
+
+        conn.execute("DELETE FROM memories", [])
+            .map_err(|e| AuraError::MemoryError(format!("Wipe memories failed: {e}")))?;
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl MemoryStore for MemoryDb {
     async fn save(&self, entry: MemoryEntry) -> Result<(), AuraError> {
-        let conn = self.conn.lock()
+        let conn = self
+            .conn
+            .lock()
             .map_err(|e| AuraError::MemoryError(format!("Lock error: {e}")))?;
 
         let entry_type_str = match entry.entry_type {
@@ -227,7 +320,9 @@ impl MemoryStore for MemoryDb {
     }
 
     async fn search(&self, query: &str) -> Result<Vec<MemoryEntry>, AuraError> {
-        let conn = self.conn.lock()
+        let conn = self
+            .conn
+            .lock()
             .map_err(|e| AuraError::MemoryError(format!("Lock error: {e}")))?;
 
         let pattern = format!("%{query}%");
@@ -236,15 +331,16 @@ impl MemoryStore for MemoryDb {
         )
         .map_err(|e| AuraError::MemoryError(format!("Prepare failed: {e}")))?;
 
-        let entries = stmt.query_map(params![pattern], |row| {
-            let id_str: String = row.get(0)?;
-            let content: String = row.get(1)?;
-            let entry_type_str: String = row.get(2)?;
-            let created_at_str: String = row.get(3)?;
-            let tags_str: String = row.get(4)?;
-            Ok((id_str, content, entry_type_str, created_at_str, tags_str))
-        })
-        .map_err(|e| AuraError::MemoryError(format!("Query failed: {e}")))?;
+        let entries = stmt
+            .query_map(params![pattern], |row| {
+                let id_str: String = row.get(0)?;
+                let content: String = row.get(1)?;
+                let entry_type_str: String = row.get(2)?;
+                let created_at_str: String = row.get(3)?;
+                let tags_str: String = row.get(4)?;
+                Ok((id_str, content, entry_type_str, created_at_str, tags_str))
+            })
+            .map_err(|e| AuraError::MemoryError(format!("Query failed: {e}")))?;
 
         let mut result = Vec::new();
         for row in entries {
@@ -260,7 +356,11 @@ impl MemoryStore for MemoryDb {
                 "preference" => MemoryEntryType::Preference,
                 "task_history" => MemoryEntryType::TaskHistory,
                 "temp_context" => MemoryEntryType::TempContext,
-                other => return Err(AuraError::MemoryError(format!("Unknown entry type: {other}"))),
+                other => {
+                    return Err(AuraError::MemoryError(format!(
+                        "Unknown entry type: {other}"
+                    )))
+                }
             };
 
             let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)

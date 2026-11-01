@@ -16,12 +16,17 @@ object AuraEngine {
     }
 
     @Synchronized
-    fun initialize(): Boolean {
+    fun initialize(storagePath: String? = null): Boolean {
         if (nativeHandle != 0L) return true
         return try {
-            nativeHandle = nativeInit()
+            nativeHandle = if (storagePath != null) {
+                // Persistent mode: conversations survive app restarts (SQLite).
+                nativeInitWithPath(storagePath)
+            } else {
+                nativeInit()
+            }
             val ok = nativeHandle != 0L
-            Log.i(TAG, "AuraEngine initialized with handle: $nativeHandle (success=$ok)")
+            Log.i(TAG, "AuraEngine initialized with handle: $nativeHandle (success=$ok, persistent=${storagePath != null})")
             ok
         } catch (e: Throwable) {
             Log.e(TAG, "Failed to initialize AuraEngine: ${e.message}")
@@ -62,6 +67,7 @@ object AuraEngine {
 
     // Native JNI declarations matching Java_app_aura_core_AuraEngine_*
     private external fun nativeInit(): Long
+    private external fun nativeInitWithPath(storagePath: String): Long
     private external fun nativeProcessMessage(handle: Long, input: String): String
     private external fun nativeEmergencyStop(handle: Long)
     private external fun nativeDestroy(handle: Long)

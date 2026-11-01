@@ -76,8 +76,15 @@ impl InferenceBackend for PlaceholderBackend {
         self.model_info.is_some()
     }
 
-    async fn generate(&self, _prompt: &str, _config: &InferenceConfig) -> Result<String, AuraError> {
-        Ok("(Inference backend not yet connected — llama.cpp integration pending Phase 3)".to_string())
+    async fn generate(
+        &self,
+        _prompt: &str,
+        _config: &InferenceConfig,
+    ) -> Result<String, AuraError> {
+        Ok(
+            "(Inference backend not yet connected — llama.cpp integration pending Phase 3)"
+                .to_string(),
+        )
     }
 }
 
@@ -99,7 +106,7 @@ impl InferenceManager {
     }
 
     /// Create a manager with a custom backend (useful for testing or future backends).
-    pub fn with_backend(backend: impl InferenceBackend + Send + Sync + 'static) -> Self {
+    pub fn with_backend(backend: impl InferenceBackend + 'static) -> Self {
         Self {
             backend: Box::new(backend),
             status: ModelStatus::NotLoaded,
@@ -124,7 +131,11 @@ impl InferenceManager {
         }
     }
 
-    pub async fn generate(&self, prompt: &str, config: &InferenceConfig) -> Result<String, AuraError> {
+    pub async fn generate(
+        &self,
+        prompt: &str,
+        config: &InferenceConfig,
+    ) -> Result<String, AuraError> {
         self.backend.generate(prompt, config).await
     }
 
