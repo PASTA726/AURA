@@ -61,14 +61,23 @@ flowchart TD
 ---
 
 ## Phase 3: Local LLM Inference
+- **Status**: Core embedded (v0.1.2, host-verified); on-device benchmarking pending.
 - **Goal**: Embed llama.cpp native inference engine running quantized GGUF models directly on-device.
 - **Deliverables**:
-  - `aura-inference` backend implementing `llama.cpp` C++ binding.
-  - GGUF model loader supporting Q4_K_M quantization.
-  - Token streaming channel into Kotlin Compose UI via JNI callbacks.
+  - `aura-inference` backend implementing `llama.cpp` C++ binding. ✅ `GgufBackend`
+    (llama-cpp-2 0.1.160, `gguf` feature).
+  - GGUF model loader supporting Q4_K_M quantization. ✅ (verified with
+    SmolLM2-135M-Instruct-Q4_K_M on host).
+  - ARM64 cross-build into the APK. ✅ (`gguf-android` feature, NDK toolchain,
+    `c++_static`, no `libc++_shared.so`).
+  - Token streaming channel into Kotlin Compose UI via JNI callbacks. ⏳ Not yet
+    (generation returns whole completions today).
 - **Acceptance Criteria**:
-  - Successfully load a 1B–3B GGUF model on ARM64.
-  - Token generation speed observable with real-time UI streaming.
+  - Successfully load a 1B–3B GGUF model on ARM64. ⏳ The loader path is built and
+    host-verified for ARM64 targets, but 1B–3B load has not been measured on real
+    hardware yet.
+  - Token generation speed observable with real-time UI streaming. ⏳ Blocked on
+    streaming (above).
 
 ---
 

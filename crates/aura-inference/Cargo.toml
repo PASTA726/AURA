@@ -15,4 +15,14 @@ tokio = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
 aura-core = { path = "../aura-core" }
-aura-protocol = { path = "../aura-protocol" }
+aura-protocol = { path = "../aura-protocol" }	
+llama-cpp-2 = { version = "0.1.160", default-features = false, features = ["sampler", "common"], optional = true }
+# Static C++ runtime for Android cdylib builds (no libc++_shared.so in APK).
+# Inert for host builds; build.rs only applies it for android targets.
+llama-cpp-sys-2 = { version = "0.1.160", default-features = false, features = ["static-stdcxx"], optional = true }
+
+[features]
+# Host builds: dynamic std is fine.
+gguf = ["dep:llama-cpp-2"]
+# Android builds: bake the C++ runtime into libaura_runtime.so.
+gguf-android = ["gguf", "dep:llama-cpp-sys-2"]

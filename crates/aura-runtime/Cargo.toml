@@ -11,6 +11,8 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = []
 android = ["dep:jni"]
+gguf = ["aura-inference/gguf"]
+gguf-android = ["gguf", "aura-inference/gguf-android"]
 
 [dependencies]
 aura-core = { path = "../aura-core" }

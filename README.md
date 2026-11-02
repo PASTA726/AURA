@@ -97,9 +97,9 @@ The resulting APK is generated at:
 
 ---
 
-## 6. Alpha Status (v0.1.1)
+## 6. Alpha Status (v0.1.2)
 
-Implemented and verified (22/22 cargo tests, zero clippy warnings):
+Implemented and verified (22/22 cargo tests + 2/2 GGUF smoke tests, zero clippy warnings):
 
 - **Real agent execution loop** (`aura-agent::AgentLoop`): reasoning → JSON action
   protocol (`respond` / `call_tool`) → tool execution → observation → answer, with
@@ -112,6 +112,14 @@ Implemented and verified (22/22 cargo tests, zero clippy warnings):
 - **Persistent memory** (`aura-memory`): conversations, messages, tool
   observations and audit records in SQLite; the Android app initializes
   `AgentEngine` with `filesDir` storage so chat history survives restarts.
-- **Model interface**: the agent loop is model-agnostic through
-  `InferenceBackend`; real GGUF inference (llama.cpp) lands in Phase 3 — until
-  then the bundled placeholder backend answers degraded but never fakes success.
+- **On-device GGUF inference (llama.cpp)** — new in v0.1.2:
+  - `aura-inference` embeds llama.cpp behind the `gguf` cargo feature
+    (`GgufBackend`): model file loading (user-consented path, nothing auto-downloaded),
+    chat-template rendering, tokenize → prefill → sampling (`temp`/`top_p`, fixed seed,
+    greedy at `temp=0`), EOS + stop-sequence + max-token caps, context-budget guard.
+  - `AuraEngine.loadGguf(path)` (JNI `nativeLoadGguf`) loads a GGUF file from device storage.
+  - ARM64 `libaura_runtime.so` built with the NDK toolchain (`armv8.2-a+dotprod`,
+    API 26), C++ runtime statically linked — no extra `libc++_shared.so` in the APK.
+  - Verified on host against a real model (`SmolLM2-135M-Instruct-Q4_K_M`, 105 MB):
+    load + generation + JSON-action protocol. On-device speed/memory on a specific
+    phone is not yet measured; larger GGUF models run through the same path.

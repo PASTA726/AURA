@@ -88,18 +88,21 @@ Located in `/home/teto/Masaüstü/AURA/android/`:
 
 ---
 
-## 6. GitHub Repository & Alpha Release
+## 6. GitHub Repository & Alpha Releases
 
 - **GitHub Repository**: https://github.com/PASTA726/AURA
 - **Alpha Release (v0.1.0-alpha)**: https://github.com/PASTA726/AURA/releases/tag/v0.1.0-alpha
-- **Attached Binary**: `app-debug.apk` (24 MB, asset name corrected from earlier notes)
+- **Alpha Release (v0.1.1-alpha)**: https://github.com/PASTA726/AURA/releases/tag/v0.1.1-alpha
+- **Assets**: v0.1.0 `app-debug.apk`; v0.1.1 `AURA-v0.1.1-alpha-arm64.apk`
+  (naming convention adopted: `AURA-v<ver>-alpha-arm64.apk`)
 - **Branch**: `main` (clean working directory)
 
 ---
 
 ## 7. Session Log — 2026-11-01 — Core Integration (v0.1.1)
 
-**User directive**: "Geliştir" → chosen direction: Rust core integration (Phases 4/5/6), confirmed via question round.
+**User directive**: "Geliştir" → chosen direction: Rust core integration
+(Phases 4/5/6), confirmed via question round.
 
 ### 7.1 Real Agent Execution Loop (`aura-agent`)
 - Replaced the placeholder `process_input` with an actual reasoning/execution cycle:
@@ -144,21 +147,84 @@ Located in `/home/teto/Masaüstü/AURA/android/`:
 - `cargo clippy --workspace --all-targets`: **0 warnings**.
 - `cargo fmt --all` applied.
 - ARM64 rebuild: `cargo build --package aura-runtime --target aarch64-linux-android --features android` OK;
-  `.so` copied to `android/app/src/main/jniLibs/arm64-v8a/` (31 MB debug).
-- APK: `./gradlew assembleDebug` (see §7.6 result when recorded).
-
-### 7.6 apk Build & Release Result
+  `.so` copied to `android/app/src/main/jniLibs/arm64-v8a/`.
 - Gradle: `BUILD SUCCESSFUL in 1m 50s` → `app-debug.apk` 34.6 MB, SHA-256
-  `3728d2f039e88dbacb4537000a914de43697ad94653eabf5294333b76915adb8`, contains
-  `lib/arm64-v8a/libaura_runtime.so` (31.8 MB debug build).
-- Commit `2c27b94` pushed; tag `v0.1.1-alpha` pushed.
-- Release: https://github.com/PASTA726/AURA/releases/tag/v0.1.1-alpha (Latest,
-  asset `AURA-v0.1.1-alpha-arm64.apk`).
+  `3728d2f039e88dbacb4537000a914de43697ad94653eabf5294333b76915adb8`.
+- Commits `2c27b94` + `bb02480` pushed; tag `v0.1.1-alpha` pushed; release published.
 
-### 7.7 Next Steps
-- Phase 3: llama.cpp GGUF backend (real on-device inference; needs a model
-  download with user consent).
-- Memory UI screens wired behind JNI accessors (inspect/wipe already exist in
-  Rust: `count_messages`, `latest_conversation`, `wipe_messages`, `wipe_memories`).
-- Lesson for future releases: asset naming `AURA-v<ver>-alpha-arm64.apk` works
-  well; v0.1.0 shipped as plain `app-debug.apk`.
+---
+
+## 8. Session Log — 2026-11-02 — Phase 3: llama.cpp GGUF backend (v0.1.2-alpha COMPLETE)
+
+**User directive**: "sonraki adıma geç" → Phase 3 (real on-device inference).
+**Consent obtained**: small test model download approved (SmolLM2-135M-Instruct-Q4_K_M ~105 MB from bartowski HF repo).
+
+### 8.1 Dependencies & environment
+- `llama-cpp-2 v0.1.160` (+ `sampler` feature, optional) added to `aura-inference`
+  behind `gguf` cargo feature (src/llama.rs, re-exported as `GgufBackend`).
+- `aura-runtime` gained `gguf = ["aura-inference/gguf"]`; JNI `nativeLoadGguf`
+  (blocking, JSON result), `AuraRuntime::load_gguf / load_gguf_blocking`;
+  Kotlin `AuraEngine.loadGguf(path)` (safe when .so lacks the symbol).
+- **NixOS host quirks discovered (critical for future builds)**:
+  - cmake/ninja/clang must come from `nix-shell -p cmake ninja clang` (none in PATH otherwise).
+  - Turkish locale breaks nix cc-wrapper setup-hook (`RANLİB`) → always `LC_ALL=C`.
+  - Non-ASCII project path breaks the nix clang++ wrapper → **use stock g++ for
+    CC/CXX; the wrapper mangles `Masaüstü` into `$Masa303274st`** (never set
+    CC/CXX to nix clang for this repo on this machine).
+  - bindgen (llama-cpp-sys-2) needs explicit:
+    `LIBCLANG_PATH=/nix/store/7wxvhkgxnzarwzbc2vp1yzzwh2741xfn-clang-21.1.8-lib/lib`
+    and `BINDGEN_EXTRA_CLANG_ARGS="-I<nix clang wrapper>/resource-root/include
+    -isystem $(nix-build '<nixpkgs>' -A glibc.dev)/include"`.
+- Test model at `models/SmolLM2-135M-Instruct-Q4_K_M.gguf` (105,454,432 bytes).
+- Baseline re-verified post-refactor: `cargo test --all` 22/22,
+  `cargo check -p aura-runtime --all-targets` clean (gguf feature off by default).
+
+### 8.2 Untested/remaining (honest status)
+- GGUF feature compile + smoke test: in progress at time of writing (§8.1 blockers
+  fixed one-by-one; final result appended in §8.3).
+- Android ARM64 cross-build of llama.cpp: unexplored (needs NDK cmake toolchain
+  strategy, e.g. `CMAKE_ARGS -DCMAKE_SYSTEM_NAME=Android ...`).
+- Streaming token output into the UI: not implemented (trait is completion-based).
+
+### 8.3 Final results (v0.1.2-alpha)
+
+**Host verification (all passed):**
+- `cargo check -p aura-inference --features gguf` — clean (after 3 API fixes:
+  `LlamaModelParams` lives in `model::params`; `token_to_piece` returns `Vec<u8>`;
+  `LlamaChatMessage::new` returns `Result`).
+- Real-model smoke tests (`AURA_GGUF_MODEL=…/SmolLM2-135M-Instruct-Q4_K_M.gguf`,
+  `cargo test -p aura-inference --features gguf --release`): **2/2 passed** —
+  load + generate works, JSON-action protocol exercisable. Model answers are
+  weak (135M model) — pipeline proof, not quality proof.
+- `cargo test --all`: **22/22** (baseline unaffected); `cargo clippy --all
+  --all-targets`: **0 warnings**; `cargo fmt` clean.
+
+**Feature-matrix fix (found on first android cross-build):**
+- `llama-cpp-2`'s default features include `android-shared-stdcxx` → clashed with
+  our `static-stdcxx`. Resolution: `llama-cpp-2 = { default-features = false,
+  features = ["sampler", "common"] }`; `llama-cpp-sys-2` optional dep with
+  `default-features = false, features = ["static-stdcxx"]`, enabled by
+  `gguf-android`. (sys crate default is just `common`, no stdcxx conflict.)
+- `aura-runtime` fixes: `InferenceBackend` trait import for `load_model`; borrow
+  conflict in `load_gguf_blocking` resolved via field destructuring +
+  `load_gguf_core(inference_manager, memory, path)` shared async helper.
+
+**ARM64 cross-build (passed):**
+- `ANDROID_NDK=…/ndk/27.2.12479018 ANDROID_API_LEVEL=26
+  GGML_CPU_ARM_ARCH=armv8.2-a+dotprod cargo build -p aura-runtime
+  --features "android,gguf-android" --target aarch64-linux-android --release`
+  (bindgen needs `LIBCLANG_PATH` + glibc include args as §8.1; llama.cpp builds
+  via the sys crate's built-in NDK cmake config).
+- Result: `libaura_runtime.so` 9,537,832 bytes, ELF aarch64 for Android 26,
+  NEEDED = libdl/libm/libc only (**no `libc++_shared.so`** — static c++ works),
+  `Java_app_aura_core_AuraEngine_nativeLoadGguf` exported.
+- APK: BUILD SUCCESSFUL in 3m30s → 24,600,344 bytes,
+  SHA-256 `35d1b1cf93c35c724116315e739275ff030abbe63ad1ce0f5af8291b6fb431d1`;
+  contains `lib/arm64-v8a/libaura_runtime.so`.
+
+**Release:** v0.1.2-alpha published with `AURA-v0.1.2-alpha-arm64.apk`.
+
+**Next up (Phase 3 leftovers):**
+- On-device: measure load time / tokens-per-second with a ~0.5–3B GGUF (Reeder S71).
+- Token streaming JNI callbacks into Compose UI.
+- Model-picker UI (SAF document picker) + first-run onboarding copy.

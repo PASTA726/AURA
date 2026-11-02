@@ -55,6 +55,24 @@ object AuraEngine {
         }
     }
 
+    /**
+     * Load a GGUF model from a user-selected local file path (no automatic
+     * network download). Blocking — call from a background coroutine/thread.
+     * Returns a JSON string: {"ok":true, name, contextLength, quantization,
+     * sizeBytes} or {"ok":false,"error":…}.
+     */
+    @Synchronized
+    fun loadGguf(path: String): String {
+        if (nativeHandle == 0L && !initialize(null)) {
+            return """{"ok":false,"error":"engine not initialized"}"""
+        }
+        return try {
+            nativeLoadGguf(nativeHandle, path)
+        } catch (e: Throwable) {
+            """{"ok":false,"error":"${e.message ?: "unknown JNI error"}"}"""
+        }
+    }
+
     @Synchronized
     fun destroy() {
         if (nativeHandle != 0L) {
@@ -69,6 +87,7 @@ object AuraEngine {
     private external fun nativeInit(): Long
     private external fun nativeInitWithPath(storagePath: String): Long
     private external fun nativeProcessMessage(handle: Long, input: String): String
+    private external fun nativeLoadGguf(handle: Long, path: String): String
     private external fun nativeEmergencyStop(handle: Long)
     private external fun nativeDestroy(handle: Long)
 }

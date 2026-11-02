@@ -3,6 +3,11 @@ use serde::{Deserialize, Serialize};
 
 use aura_core::{AuraError, InferenceConfig};
 
+#[cfg(feature = "gguf")]
+pub mod llama;
+#[cfg(feature = "gguf")]
+pub use llama::GgufBackend;
+
 /// Metadata about a loaded model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {

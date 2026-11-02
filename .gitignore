@@ -17,3 +17,6 @@ captures/
 
 # Scratch & Logs
 *.log
+
+# GGUF model files are too large for git; distribute via release assets.
+models/*.gguf

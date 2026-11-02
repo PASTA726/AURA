@@ -200,10 +200,77 @@ impl AuraRuntime {
         self.inference_manager = aura_inference::InferenceManager::with_backend(backend);
     }
 
+    /// Load a GGUF model as the active inference backend (feature `gguf`).
+    /// Models are only ever loaded from an explicit user-provided path —
+    /// nothing is downloaded automatically.
+    #[cfg(any(feature = "gguf", feature = "gguf-android"))]
+    pub async fn load_gguf(&mut self, path: &str) -> Result<aura_inference::ModelInfo, AuraError> {
+        // Destructure so the two fields borrow independently of `self`.
+        let AuraRuntime {
+            inference_manager,
+            memory,
+            ..
+        } = self;
+        load_gguf_core(inference_manager, memory.as_mut(), path).await
+    }
+
+    /// Blocking wrapper for [AuraRuntime::load_gguf] usable from JNI.
+    #[cfg(any(feature = "gguf", feature = "gguf-android"))]
+    pub fn load_gguf_blocking(
+        &mut self,
+        path: &str,
+    ) -> Result<aura_inference::ModelInfo, AuraError> {
+        // Same destructuring pattern as `process_message`: the runtime must be
+        // borrowed independently of the fields it drives via block_on.
+        let AuraRuntime {
+            inference_manager,
+            memory,
+            tokio_rt,
+            ..
+        } = self;
+        let path_owned = path.to_string();
+        if let Some(ref rt) = tokio_rt {
+            rt.block_on(load_gguf_core(
+                inference_manager,
+                memory.as_mut(),
+                &path_owned,
+            ))
+        } else {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| AuraError::AgentError(e.to_string()))?;
+            rt.block_on(load_gguf_core(
+                inference_manager,
+                memory.as_mut(),
+                &path_owned,
+            ))
+        }
+    }
+
     /// SQLite-backed memory accessor for UI screens (inspect / search / wipe).
     pub fn memory(&self) -> Option<&MemoryDb> {
         self.memory.as_ref()
     }
+}
+
+/// GGUF load pipeline shared by the async API and the JNI blocking wrapper:
+/// create backend → load model file → swap it into the manager → audit log.
+#[cfg(any(feature = "gguf", feature = "gguf-android"))]
+async fn load_gguf_core(
+    inference_manager: &mut aura_inference::InferenceManager,
+    memory: Option<&mut MemoryDb>,
+    path: &str,
+) -> Result<aura_inference::ModelInfo, AuraError> {
+    use aura_inference::InferenceBackend;
+
+    let mut backend = aura_inference::GgufBackend::new()?;
+    let info = backend.load_model(path).await?;
+    *inference_manager = aura_inference::InferenceManager::with_backend(backend);
+    if let Some(mem) = memory {
+        let _ = mem.log_audit("model_loaded", path);
+    }
+    Ok(info)
 }
 
 impl Default for AuraRuntime {
@@ -279,6 +346,47 @@ pub mod jni_bridge {
             Ok(reply) => env.new_string(reply).unwrap().into_raw(),
             Err(e) => env.new_string(format!("Error: {e}")).unwrap().into_raw(),
         }
+    }
+
+    /// Load a GGUF model file into the inference manager (blocking).
+    /// Returns a JSON result the Kotlin side can surface directly:
+    /// `{"ok":true,“name”:…}` or `{"ok":false,"error":…}`.
+    #[cfg(any(feature = "gguf", feature = "gguf-android"))]
+    #[no_mangle]
+    pub extern "system" fn Java_app_aura_core_AuraEngine_nativeLoadGguf(
+        mut env: JNIEnv,
+        _class: JClass,
+        ptr: jlong,
+        jpath: JString,
+    ) -> jstring {
+        if ptr == 0 {
+            let output = env
+                .new_string(r#"{"ok":false,"error":"engine not initialized"}"#)
+                .unwrap();
+            return output.into_raw();
+        }
+        let runtime = unsafe { &mut *(ptr as *mut AuraRuntime) };
+        let path: String = match env.get_string(&jpath) {
+            Ok(s) => s.into(),
+            Err(_) => {
+                let output = env
+                    .new_string(r#"{"ok":false,"error":"invalid path"}"#)
+                    .unwrap();
+                return output.into_raw();
+            }
+        };
+
+        let reply = match runtime.load_gguf_blocking(&path) {
+            Ok(info) => serde_json::json!({
+                "ok": true,
+                "name": info.name,
+                "contextLength": info.context_length,
+                "quantization": info.quantization,
+                "sizeBytes": info.size_bytes,
+            }),
+            Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
+        };
+        env.new_string(reply.to_string()).unwrap().into_raw()
     }
 
     #[no_mangle]
