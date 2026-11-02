@@ -13,250 +13,287 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import app.aura.core.AuraEngine
 import app.aura.ui.theme.*
+import app.aura.ui.theme.LocalAuraPalette
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
-enum class MemoryCategory(val label: String) {
-    All("All"),
-    Preferences("Preferences"),
-    LongTerm("Long-term"),
-    Conversations("Conversations"),
-    Tasks("Tasks")
+private enum class MemoryCategory(val label: String, val native: String) {
+    All("All", ""),
+    Preferences("Preferences", "preference"),
+    LongTerm("Long-term", "long_term"),
+    Conversations("Conversations", "conversation"),
+    Tasks("Tasks", "task_history")
 }
 
-data class MemoryItem(
-    val id: Int,
+private data class MemoryItem(
+    val id: String,
     val content: String,
-    val type: MemoryCategory,
+    val entryType: String,
     val timestamp: String
 )
+
+private val relativeFormatter = DateTimeFormatter.ofPattern("MMM d, HH:mm")
+
+private fun displayTimestamp(rfc3339: String): String = try {
+    ZonedDateTime.parse(rfc3339).format(relativeFormatter)
+} catch (_: Throwable) {
+    ""
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MemoryScreen() {
+    val palette = LocalAuraPalette.current
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf(MemoryCategory.All) }
+    var allMemories by remember { mutableStateOf<List<MemoryItem>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    var addDialogOpen by remember { mutableStateOf(false) }
+    var newMemoryText by remember { mutableStateOf("") }
+    var addError by remember { mutableStateOf<String?>(null) }
+    val coroutineScope = rememberCoroutineScope()
 
-    val allMemories = remember {
-        listOf(
-            MemoryItem(1, "User prefers concise, bullet-pointed responses when summarizing documents.", MemoryCategory.Preferences, "3 days ago"),
-            MemoryItem(2, "Working on a Rust + Android project called AURA, a local-first AI agent.", MemoryCategory.LongTerm, "1 week ago"),
-            MemoryItem(3, "Had a conversation about quarterly report summarization on October 28.", MemoryCategory.Conversations, "3 days ago")
-        )
+    fun reload() {
+        coroutineScope.launch {
+            loading = true
+            val json = withContext(Dispatchers.IO) { AuraEngine.getMemoriesJson(200) }
+            val arr = runCatching { JSONArray(json) }.getOrDefault(JSONArray())
+            val parsed = (0 until arr.length()).mapNotNull { i ->
+                val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+                MemoryItem(
+                    id = obj.optString("id"),
+                    content = obj.optString("content"),
+                    entryType = obj.optString("entryType"),
+                    timestamp = displayTimestamp(obj.optString("timestamp"))
+                )
+            }
+            allMemories = parsed
+            loading = false
+        }
     }
 
-    val filteredMemories = remember(searchQuery, selectedCategory) {
-        allMemories.filter { item ->
-            val matchesCategory = selectedCategory == MemoryCategory.All || item.type == selectedCategory
-            val matchesSearch = searchQuery.isBlank() || item.content.contains(searchQuery, ignoreCase = true)
-            matchesCategory && matchesSearch
-        }
+    LaunchedEffect(Unit) { reload() }
+
+    val filtered = allMemories.filter { item ->
+        val matchesCategory =
+            selectedCategory == MemoryCategory.All || item.entryType == selectedCategory.native
+        val matchesSearch =
+            searchQuery.isBlank() || item.content.contains(searchQuery, ignoreCase = true)
+        matchesCategory && matchesSearch
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(AuraBackground)
+            .background(palette.background)
     ) {
         TopAppBar(
             title = {
                 Text(
                     text = "Memory",
                     style = MaterialTheme.typography.titleLarge,
-                    color = AuraOnBackground
+                    color = palette.onBackground
                 )
             },
             actions = {
-                IconButton(onClick = {}) {
+                IconButton(
+                    onClick = { coroutineScope.launch {
+                        withContext(Dispatchers.IO) { AuraEngine.wipeMemories() }
+                        reload()
+                    } },
+                    enabled = allMemories.isNotEmpty()
+                ) {
                     Icon(
-                        Icons.Filled.Search,
-                        contentDescription = "Search",
-                        tint = AuraOnSurface
+                        Icons.Filled.DeleteSweep,
+                        contentDescription = "Wipe all memories",
+                        tint = AuraError
                     )
                 }
             },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = AuraSurface)
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = palette.surface)
         )
+
+        // Search
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            placeholder = {
+                Text("Search stored memories", color = palette.onSurfaceMuted)
+            },
+            leadingIcon = {
+                Icon(Icons.Filled.Search, contentDescription = "Search", tint = palette.onSurfaceMuted)
+            },
+            shape = RoundedCornerShape(14.dp),
+            singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = AuraCyan,
+                cursorColor = AuraCyan,
+                focusedTextColor = palette.onBackground,
+                unfocusedTextColor = palette.onBackground,
+                focusedContainerColor = palette.surface,
+                unfocusedContainerColor = palette.surface
+            )
+        )
+
+        // Category chips
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(MemoryCategory.entries) { category ->
+                FilterChip(
+                    selected = selectedCategory == category,
+                    onClick = { selectedCategory = category },
+                    label = {
+                        Text(
+                            category.label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (selectedCategory == category) AuraCyan
+                            else palette.onSurfaceMuted
+                        )
+                    }
+                )
+            }
+        }
+
+        // Add memory
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = if (loading) "Loading…" else "${filtered.size} stored",
+                style = MaterialTheme.typography.labelMedium,
+                color = palette.onSurfaceMuted
+            )
+            TextButton(onClick = { addDialogOpen = true }) {
+                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Remember something")
+            }
+        }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Search bar
-            item {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    placeholder = {
-                        Text("Search memories…", color = AuraOnSurfaceMuted, style = MaterialTheme.typography.bodyMedium)
-                    },
-                    leadingIcon = {
-                        Icon(Icons.Filled.Search, contentDescription = null, tint = AuraOnSurfaceMuted)
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(Icons.Filled.Clear, contentDescription = "Clear", tint = AuraOnSurfaceMuted)
-                            }
-                        }
-                    },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = AuraCyan,
-                        unfocusedBorderColor = AuraSurfaceVariant,
-                        focusedTextColor = AuraOnBackground,
-                        unfocusedTextColor = AuraOnBackground,
-                        cursorColor = AuraCyan,
-                        focusedContainerColor = AuraSurfaceVariant,
-                        unfocusedContainerColor = AuraSurfaceVariant
-                    ),
-                    shape = RoundedCornerShape(14.dp),
-                    textStyle = MaterialTheme.typography.bodyMedium
-                )
-            }
-
-            // Category filter chips
-            item {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(MemoryCategory.entries) { category ->
-                        FilterChip(
-                            selected = selectedCategory == category,
-                            onClick = { selectedCategory = category },
-                            label = { Text(category.label, style = MaterialTheme.typography.labelMedium) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = AuraCyan.copy(alpha = 0.15f),
-                                selectedLabelColor = AuraCyan,
-                                containerColor = AuraSurfaceVariant,
-                                labelColor = AuraOnSurfaceMuted
-                            ),
-                            border = FilterChipDefaults.filterChipBorder(
-                                enabled = true,
-                                selected = selectedCategory == category,
-                                selectedBorderColor = AuraCyan.copy(alpha = 0.4f),
-                                borderColor = AuraSurfaceVariant
-                            )
-                        )
-                    }
-                }
-            }
-
-            // Memory items
-            if (filteredMemories.isEmpty()) {
+            if (!loading && filtered.isEmpty()) {
                 item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 48.dp),
-                        contentAlignment = Alignment.Center
+                    // Honest empty state — no invented content.
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = palette.surfaceVariant)
                     ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(20.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
                                 Icons.Filled.Psychology,
                                 contentDescription = null,
-                                tint = AuraOnSurfaceMuted,
-                                modifier = Modifier.size(48.dp)
+                                tint = palette.onSurfaceMuted
                             )
+                            Spacer(Modifier.width(12.dp))
                             Text(
-                                text = "No memories found",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = AuraOnSurfaceMuted
+                                text = "No memories stored yet. AURA only stores what the " +
+                                    "agent engine is told to remember — add one above, or ask " +
+                                    "AURA to remember something in chat.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = palette.onSurfaceMuted
                             )
                         }
                     }
                 }
-            } else {
-                items(filteredMemories) { memory ->
-                    MemoryItemCard(memory = memory)
-                }
             }
-
-            // Reset Memory button
-            item {
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = {},
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AuraError),
-                    border = ButtonDefaults.outlinedButtonBorder.copy(
-                        brush = androidx.compose.ui.graphics.SolidColor(AuraError.copy(alpha = 0.5f))
-                    ),
-                    shape = RoundedCornerShape(12.dp)
+            items(filtered) { memory ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = palette.surface)
                 ) {
-                    Icon(
-                        Icons.Filled.DeleteForever,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Reset Memory", style = MaterialTheme.typography.labelMedium)
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = memory.content,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = palette.onSurface
+                        )
+                        Text(
+                            text = "${memory.entryType.replace('_', ' ')} • ${memory.timestamp}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = palette.onSurfaceMuted,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
                 }
             }
         }
     }
-}
 
-@Composable
-private fun MemoryItemCard(memory: MemoryItem) {
-    val typeColor = when (memory.type) {
-        MemoryCategory.Preferences -> AuraCyan
-        MemoryCategory.LongTerm -> AuraVioletLight
-        MemoryCategory.Conversations -> AuraWarning
-        MemoryCategory.Tasks -> AuraSuccess
-        MemoryCategory.All -> AuraOnSurfaceMuted
-    }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = AuraSurface)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(20.dp),
-                    color = typeColor.copy(alpha = 0.12f)
-                ) {
-                    Text(
-                        text = memory.type.label,
+    if (addDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { addDialogOpen = false },
+            title = { Text("Remember something") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = newMemoryText,
+                        onValueChange = { newMemoryText = it },
+                        placeholder = { Text("e.g. I prefer short answers") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                        singleLine = false
+                    )
+                    addError?.let { Text(
+                        it,
+                        color = AuraError,
                         style = MaterialTheme.typography.labelSmall,
-                        color = typeColor,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
+                        modifier = Modifier.padding(top = 4.dp)
+                    ) }
                 }
-                Text(
-                    text = memory.timestamp,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AuraOnSurfaceMuted
-                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val content = newMemoryText.trim()
+                        if (content.isEmpty()) {
+                            addError = "Nothing to store"
+                        } else {
+                            coroutineScope.launch {
+                                val result = withContext(Dispatchers.IO) {
+                                    JSONObject(AuraEngine.saveMemory(content))
+                                }
+                                if (result.optBoolean("ok", false)) {
+                                    newMemoryText = ""
+                                    addError = null
+                                    addDialogOpen = false
+                                    reload()
+                                } else {
+                                    addError = result.optString("error", "Failed to store")
+                                }
+                            }
+                        }
+                    },
+                    enabled = newMemoryText.isNotBlank()
+                ) { Text("Store") }
+            },
+            dismissButton = {
+                TextButton(onClick = { addDialogOpen = false }) { Text("Cancel") }
             }
-            Text(
-                text = memory.content,
-                style = MaterialTheme.typography.bodyMedium,
-                color = AuraOnSurface,
-                maxLines = 3
-            )
-        }
+        )
     }
 }

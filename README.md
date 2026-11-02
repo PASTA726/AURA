@@ -97,9 +97,16 @@ The resulting APK is generated at:
 
 ---
 
-## 6. Alpha Status (v0.1.2)
+## 6. Alpha Status (v0.1.3)
 
 Implemented and verified (22/22 cargo tests + 2/2 GGUF smoke tests, zero clippy warnings):
+
+- **Real GUI, no scripted demo data** — new in v0.1.3: every screen is wired to the
+  engine. Chat shows the persisted SQLite conversation (and truly resets it), the
+  Memory screen reads/writes real long-term memories, Activity renders the real
+  audit log (tool executions / permission changes / model loads), Settings' theme
+  toggle and iteration slider actually drive the app and engine, and the GGUF
+  model is loaded from the device with a file picker (nothing auto-downloaded).
 
 - **Real agent execution loop** (`aura-agent::AgentLoop`): reasoning → JSON action
   protocol (`respond` / `call_tool`) → tool execution → observation → answer, with

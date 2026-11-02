@@ -1,7 +1,6 @@
 package app.aura.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
@@ -10,22 +9,36 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.aura.ui.EngineState
 import app.aura.ui.theme.*
+import app.aura.ui.theme.LocalAuraPalette
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen() {
+fun HomeScreen(onNavigate: (route: String) -> Unit = {}) {
+    val palette = LocalAuraPalette.current
+
+    val engineReady by EngineState.engineReady.collectAsState()
+    val agentStatus by EngineState.agentStatus.collectAsState()
+    val modelLoaded by EngineState.modelLoaded.collectAsState()
+    val modelInfo by EngineState.modelInfo.collectAsState()
+    val conversationCount by EngineState.conversationCount.collectAsState()
+
+    // Fresh snapshot every time the Home screen is (re)shown.
+    LaunchedEffect(Unit) { EngineState.refreshStatus() }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(AuraBackground),
+            .background(palette.background),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -40,7 +53,7 @@ fun HomeScreen() {
                     text = "AURA",
                     style = MaterialTheme.typography.headlineLarge.copy(
                         fontWeight = FontWeight.Bold,
-                        color = AuraOnBackground
+                        color = palette.onBackground
                     )
                 )
                 Row(
@@ -48,26 +61,26 @@ fun HomeScreen() {
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        text = "Ready",
+                        text = if (engineReady) "Engine ready" else "Engine offline",
                         style = MaterialTheme.typography.labelMedium,
-                        color = AuraSuccess
+                        color = if (engineReady) AuraSuccess else AuraError
                     )
                     Box(
                         modifier = Modifier
                             .size(10.dp)
                             .clip(CircleShape)
-                            .background(AuraCyan)
+                            .background(if (engineReady) AuraCyan else AuraError)
                     )
                 }
             }
         }
 
-        // Agent Status Card
+        // Agent Status Card — real engine snapshot
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = AuraSurface)
+                colors = CardDefaults.cardColors(containerColor = palette.surface)
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -81,21 +94,22 @@ fun HomeScreen() {
                         Text(
                             text = "Agent Status",
                             style = MaterialTheme.typography.titleMedium,
-                            color = AuraOnBackground
+                            color = palette.onBackground
                         )
                         Surface(
                             shape = RoundedCornerShape(20.dp),
-                            color = AuraCyan.copy(alpha = 0.15f)
+                            color = if (agentStatus == "paused") AuraError.copy(alpha = 0.15f)
+                            else AuraCyan.copy(alpha = 0.15f)
                         ) {
                             Text(
-                                text = "● Ready",
+                                text = "● ${agentStatus.replaceFirstChar { it.uppercase() }}",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = AuraCyan,
+                                color = if (agentStatus == "paused") AuraError else AuraCyan,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                             )
                         }
                     }
-                    HorizontalDivider(color = AuraSurfaceVariant)
+                    HorizontalDivider(color = palette.surfaceVariant)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -105,161 +119,123 @@ fun HomeScreen() {
                             Text(
                                 text = "Model",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = AuraOnSurfaceMuted
+                                color = palette.onSurfaceMuted
                             )
                             Text(
-                                text = "No model loaded",
+                                text = modelInfo?.optString("name")?.takeIf { it.isNotBlank() && modelLoaded }
+                                    ?: "No model loaded",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = AuraOnSurface
+                                color = palette.onSurface
                             )
                         }
                         Surface(
                             shape = RoundedCornerShape(20.dp),
-                            color = AuraSurfaceVariant
+                            color = if (modelLoaded) AuraSuccess.copy(alpha = 0.15f)
+                            else palette.surfaceVariant
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                             ) {
-                                Icon(
-                                    Icons.Filled.WifiOff,
-                                    contentDescription = "Offline",
-                                    tint = AuraOnSurfaceMuted,
-                                    modifier = Modifier.size(14.dp)
-                                )
                                 Text(
-                                    text = "Offline",
+                                    text = if (modelLoaded) "GGUF • on-device" else "placeholder",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = AuraOnSurfaceMuted
+                                    color = if (modelLoaded) AuraSuccess else palette.onSurfaceMuted
                                 )
                             }
                         }
                     }
+                    HorizontalDivider(color = palette.surfaceVariant)
+                    Text(
+                        text = "$conversationCount stored conversation(s). Chat history " +
+                            "survives app restarts (SQLite).",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = palette.onSurfaceMuted
+                    )
                 }
             }
         }
 
-        // Quick Actions
-        item {
-            Text(
-                text = "Quick Actions",
-                style = MaterialTheme.typography.titleMedium,
-                color = AuraOnBackground
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // New Chat - primary button
-                Button(
-                    onClick = {},
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = AuraCyan,
-                        contentColor = Color(0xFF001F2A)
-                    ),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Filled.Chat, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Chat", style = MaterialTheme.typography.labelMedium)
-                }
-                // New Task
-                OutlinedButton(
-                    onClick = {},
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AuraOnSurface),
-                    border = ButtonDefaults.outlinedButtonBorder.copy(
-                        brush = androidx.compose.ui.graphics.SolidColor(AuraSurfaceVariant)
-                    ),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Task", style = MaterialTheme.typography.labelMedium)
-                }
-                // Activity
-                OutlinedButton(
-                    onClick = {},
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AuraOnSurface),
-                    border = ButtonDefaults.outlinedButtonBorder.copy(
-                        brush = androidx.compose.ui.graphics.SolidColor(AuraSurfaceVariant)
-                    ),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Activity", style = MaterialTheme.typography.labelMedium)
-                }
-            }
-        }
-
-        // Recent Tasks
-        item {
-            Text(
-                text = "Recent Tasks",
-                style = MaterialTheme.typography.titleMedium,
-                color = AuraOnBackground
-            )
-        }
-
-        item {
-            RecentTaskItem(
-                title = "Summarize quarterly report",
-                status = "Completed",
-                statusColor = AuraSuccess,
-                timeAgo = "2 hours ago",
-                icon = Icons.Filled.Description
-            )
-        }
-
-        item {
-            RecentTaskItem(
-                title = "Draft email to team about sprint",
-                status = "Completed",
-                statusColor = AuraSuccess,
-                timeAgo = "Yesterday",
-                icon = Icons.Filled.Email
-            )
-        }
-
-        item {
-            RecentTaskItem(
-                title = "Analyze codebase for refactoring",
-                status = "Failed",
-                statusColor = AuraError,
-                timeAgo = "2 days ago",
-                icon = Icons.Filled.Code
-            )
-        }
-
-        // Resources Card
+        // Quick actions
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = AuraSurface)
+                colors = CardDefaults.cardColors(containerColor = palette.surface)
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "Resources",
+                        text = "Quick Actions",
                         style = MaterialTheme.typography.titleMedium,
-                        color = AuraOnBackground
+                        color = palette.onBackground
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        ResourceInfoItem(label = "RAM", value = "— GB free")
-                        ResourceInfoItem(label = "Storage", value = "— GB free")
-                        ResourceInfoItem(label = "CPU", value = "—%")
+                    if (!modelLoaded) {
+                        // Honest onboarding prompt when no model present
+                        Text(
+                            text = "Load a GGUF model to enable real on-device inference. " +
+                                "Until then the agent answers on its internal placeholder brain.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = palette.onSurfaceMuted
+                        )
                     }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        QuickAction(
+                            icon = Icons.Filled.Chat,
+                            label = "Chat",
+                            onClick = { onNavigate("chat") },
+                            modifier = Modifier.weight(1f)
+                        )
+                        QuickAction(
+                            icon = Icons.Filled.Memory,
+                            label = if (modelLoaded) "Model OK" else "Load model",
+                            onClick = { onNavigate("settings") },
+                            modifier = Modifier.weight(1f),
+                            highlighted = !modelLoaded
+                        )
+                        QuickAction(
+                            icon = Icons.Filled.History,
+                            label = "Activity",
+                            onClick = { onNavigate("activity") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    HorizontalDivider(color = palette.surfaceVariant)
+                    QuickAction(
+                        icon = Icons.Filled.Delete,
+                        label = "Start a new conversation",
+                        onClick = {
+                            onNavigate("chat")
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+
+        // Capabilities overview — what really ships today
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = palette.surface)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "What AURA can do today",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = palette.onBackground
+                    )
+                    CapabilityRow(Icons.Filled.Bolt, "Reasoning loop with a tool protocol (JSON actions)")
+                    CapabilityRow(Icons.Filled.Search, "Search files inside granted roots only")
+                    CapabilityRow(Icons.Filled.CalendarMonth, "Time & device info tools")
+                    CapabilityRow(Icons.Filled.Memory, "Remember facts into SQLite long-term memory")
+                    CapabilityRow(Icons.Filled.Shield, "Everything offline; audit log of every action")
                 }
             }
         }
@@ -267,82 +243,43 @@ fun HomeScreen() {
 }
 
 @Composable
-private fun RecentTaskItem(
-    title: String,
-    status: String,
-    statusColor: Color,
-    timeAgo: String,
-    icon: ImageVector
+private fun QuickAction(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    highlighted: Boolean = false
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
+    val palette = LocalAuraPalette.current
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier.height(64.dp),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = AuraSurface)
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = if (highlighted) AuraCyan else palette.onSurface
+        )
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(AuraSurfaceVariant),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    icon,
-                    contentDescription = null,
-                    tint = AuraCyan,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = AuraOnBackground,
-                    maxLines = 1
-                )
-                Text(
-                    text = timeAgo,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = AuraOnSurfaceMuted
-                )
-            }
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = statusColor.copy(alpha = 0.15f)
-            ) {
-                Text(
-                    text = status,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = statusColor,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                )
-            }
-        }
+        Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
     }
 }
 
 @Composable
-private fun ResourceInfoItem(label: String, value: String) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = AuraOnSurfaceMuted
+private fun CapabilityRow(icon: ImageVector, label: String) {
+    val palette = LocalAuraPalette.current
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = AuraCyan,
+            modifier = Modifier.size(16.dp)
         )
+        Spacer(Modifier.width(10.dp))
         Text(
-            text = value,
-            style = MaterialTheme.typography.bodyMedium,
-            color = AuraOnSurface
+            label,
+            style = MaterialTheme.typography.bodySmall,
+            color = palette.onSurface
         )
     }
 }

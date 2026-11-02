@@ -73,6 +73,125 @@ object AuraEngine {
         }
     }
 
+    /**
+     * Chat history of the latest persisted conversation. JSON object:
+     * {"conversationCount":N,"messages":[{"role","content","timestamp"}]}.
+     * Blocking — call from a background coroutine/thread.
+     */
+    @Synchronized
+    fun getHistoryJson(): String {
+        if (nativeHandle == 0L && !initialize(null)) {
+            return """{"conversationCount":0,"messages":[],"error":"engine not initialized"}"""
+        }
+        return try {
+            nativeGetHistory(nativeHandle)
+        } catch (e: Throwable) {
+            """{"conversationCount":0,"messages":[],"error":"${e.message ?: "JNI error"}"}"""
+        }
+    }
+
+    /**
+     * Start a new conversation: wipes stored chat history and resets the agent
+     * loop. Memories and audit log are preserved. Blocking.
+     * Returns {"ok":bool, "error":…}.
+     */
+    @Synchronized
+    fun newConversation(): String {
+        if (nativeHandle == 0L && !initialize(null)) {
+            return """{"ok":false,"error":"engine not initialized"}"""
+        }
+        return try {
+            nativeNewConversation(nativeHandle)
+        } catch (e: Throwable) {
+            """{"ok":false,"error":"${e.message ?: "JNI error"}"}"""
+        }
+    }
+
+    /**
+     * Engine status snapshot. {"agentStatus","modelLoaded","maxIterations",
+     * "conversationCount","error"?}. Blocking.
+     */
+    @Synchronized
+    fun getStatusJson(): String {
+        if (nativeHandle == 0L && !initialize(null)) {
+            return """{"agentStatus":"paused","modelLoaded":false,"maxIterations":20,"conversationCount":0,"error":"engine not initialized"}"""
+        }
+        return try {
+            nativeGetStatus(nativeHandle)
+        } catch (e: Throwable) {
+            """{"agentStatus":"paused","modelLoaded":false,"maxIterations":20,"conversationCount":0,"error":"${e.message ?: "JNI error"}"}"""
+        }
+    }
+
+    /**
+     * Long-term memory entries, newest first. JSON array of objects
+     * {"id","content","entryType","timestamp","tags"}. Blocking.
+     */
+    @Synchronized
+    fun getMemoriesJson(limit: Int = 100): String {
+        if (nativeHandle == 0L && !initialize(null)) {
+            return "[]"
+        }
+        return try {
+            nativeGetMemories(nativeHandle, limit)
+        } catch (e: Throwable) {
+            "[]"
+        }
+    }
+
+    /** Store a long-term memory typed by the user. Blocking. {"ok", "error"?}. */
+    @Synchronized
+    fun saveMemory(content: String): String {
+        if (nativeHandle == 0L && !initialize(null)) {
+            return """{"ok":false,"error":"engine not initialized"}"""
+        }
+        return try {
+            nativeSaveMemory(nativeHandle, content)
+        } catch (e: Throwable) {
+            """{"ok":false,"error":"${e.message ?: "JNI error"}"}"""
+        }
+    }
+
+    /** Delete all long-term memory entries. Blocking. {"ok", "error"?}. */
+    @Synchronized
+    fun wipeMemories(): String {
+        if (nativeHandle == 0L && !initialize(null)) {
+            return """{"ok":false,"error":"engine not initialized"}"""
+        }
+        return try {
+            nativeWipeMemories(nativeHandle)
+        } catch (e: Throwable) {
+            """{"ok":false,"error":"${e.message ?: "JNI error"}"}"""
+        }
+    }
+
+    /**
+     * Latest audit-log records (real tool actions, model loads, permission
+     * changes). JSON array of {"timestamp","event","detail"}. Blocking.
+     */
+    @Synchronized
+    fun getAuditJson(limit: Int = 50): String {
+        if (nativeHandle == 0L && !initialize(null)) {
+            return "[]"
+        }
+        return try {
+            nativeGetAudit(nativeHandle, limit)
+        } catch (e: Throwable) {
+            "[]"
+        }
+    }
+
+    /** Clamp and set the agent's planning-iteration budget. Blocking. */
+    @Synchronized
+    fun setMaxIterations(n: Int) {
+        if (nativeHandle == 0L && !initialize(null)) return
+        try {
+            nativeSetMaxIterations(nativeHandle, n)
+        } catch (_: Throwable) {
+            //(settings clamp server-side of a well-defined range)
+        }
+    }
+
     @Synchronized
     fun destroy() {
         if (nativeHandle != 0L) {
@@ -88,6 +207,14 @@ object AuraEngine {
     private external fun nativeInitWithPath(storagePath: String): Long
     private external fun nativeProcessMessage(handle: Long, input: String): String
     private external fun nativeLoadGguf(handle: Long, path: String): String
+    private external fun nativeGetHistory(handle: Long): String
+    private external fun nativeNewConversation(handle: Long): String
+    private external fun nativeGetStatus(handle: Long): String
+    private external fun nativeGetMemories(handle: Long, limit: Int): String
+    private external fun nativeSaveMemory(handle: Long, content: String): String
+    private external fun nativeWipeMemories(handle: Long): String
+    private external fun nativeGetAudit(handle: Long, limit: Int): String
+    private external fun nativeSetMaxIterations(handle: Long, iterations: Int)
     private external fun nativeEmergencyStop(handle: Long)
     private external fun nativeDestroy(handle: Long)
 }

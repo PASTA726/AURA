@@ -51,7 +51,7 @@ dependencies = [
 
 [[package]]
 name = "aura-agent"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -72,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "aura-core"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "chrono",
@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "aura-inference"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -102,7 +102,7 @@ dependencies = [
 
 [[package]]
 name = "aura-memory"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -119,7 +119,7 @@ dependencies = [
 
 [[package]]
 name = "aura-planner"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -136,7 +136,7 @@ dependencies = [
 
 [[package]]
 name = "aura-protocol"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "aura-core",
  "chrono",
@@ -147,7 +147,7 @@ dependencies = [
 
 [[package]]
 name = "aura-runtime"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -172,7 +172,7 @@ dependencies = [
 
 [[package]]
 name = "aura-tools"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "aura-vision"
-version = "0.1.1"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "aura-core",

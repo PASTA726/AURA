@@ -11,212 +11,168 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import app.aura.core.AuraEngine
 import app.aura.ui.theme.*
+import app.aura.ui.theme.LocalAuraPalette
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
-data class TaskRecord(
-    val id: Int,
-    val description: String,
-    val status: TaskStatus,
-    val timestamp: String
+private data class ActivityRecord(
+    val timestamp: String,
+    val event: String,
+    val detail: String
 )
 
-enum class TaskStatus { Completed, Failed, Running }
+private val displayFormat = DateTimeFormatter.ofPattern("MMM d, HH:mm:ss")
+
+private fun displayTimestamp(rfc3339: String): String = try {
+    ZonedDateTime.parse(rfc3339).format(displayFormat)
+} catch (_: Throwable) {
+    ""
+}
+
+private fun eventLabel(event: String): String = when (event) {
+    "tool_executed" -> "TOOL EXECUTED"
+    "tool_failed" -> "TOOL FAILED"
+    "permission_granted" -> "PERMISSION GRANTED"
+    "permission_revoked" -> "PERMISSION REVOKED"
+    "model_loaded" -> "MODEL LOADED"
+    "engine_started" -> "ENGINE STARTED"
+    else -> event.uppercase().replace('_', ' ')
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ActivityScreen() {
-    var taskHistory by remember {
-        mutableStateOf(
-            listOf(
-                TaskRecord(1, "Summarize quarterly report PDF", TaskStatus.Completed, "Today, 2:15 PM"),
-                TaskRecord(2, "Draft team announcement email", TaskStatus.Completed, "Today, 10:30 AM"),
-                TaskRecord(3, "Analyze codebase for refactoring opportunities", TaskStatus.Failed, "Yesterday, 4:45 PM")
-            )
-        )
+    val palette = LocalAuraPalette.current
+    var records by remember { mutableStateOf<List<ActivityRecord>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    val coroutineScope = rememberCoroutineScope()
+
+    fun reload() {
+        coroutineScope.launch {
+            loading = true
+            val json = withContext(Dispatchers.IO) { AuraEngine.getAuditJson(100) }
+            val arr = runCatching { JSONArray(json) }.getOrDefault(JSONArray())
+            records = (0 until arr.length()).mapNotNull { i ->
+                val obj = arr.optJSONObject(i) ?: return@mapNotNull null
+                ActivityRecord(
+                    timestamp = obj.optString("timestamp"),
+                    event = obj.optString("event"),
+                    detail = obj.optString("detail")
+                )
+            }
+            loading = false
+        }
     }
+
+    LaunchedEffect(Unit) { reload() }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(AuraBackground)
+            .background(palette.background)
     ) {
         TopAppBar(
             title = {
                 Text(
                     text = "Activity",
                     style = MaterialTheme.typography.titleLarge,
-                    color = AuraOnBackground
+                    color = palette.onBackground
                 )
             },
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = AuraSurface
-            )
+            actions = {
+                IconButton(onClick = { reload() }, enabled = !loading) {
+                    Icon(
+                        Icons.Filled.Refresh,
+                        contentDescription = "Refresh",
+                        tint = palette.onSurface
+                    )
+                }
+            },
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = palette.surface)
+        )
+
+        Text(
+            text = "AUDIT LOG — every gated action the agent took, straight from the engine",
+            style = MaterialTheme.typography.labelMedium,
+            color = palette.onSurfaceMuted,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
         )
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Current task section
-            item {
-                Text(
-                    text = "CURRENT TASK",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = AuraOnSurfaceMuted
-                )
-                Spacer(Modifier.height(8.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = AuraSurface)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            Icons.Filled.HourglassEmpty,
-                            contentDescription = null,
-                            tint = AuraOnSurfaceMuted,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = "No active task",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = AuraOnSurfaceMuted
-                        )
-                    }
-                }
-            }
-
-            // Task history header with clear button
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "HISTORY",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = AuraOnSurfaceMuted
-                    )
-                    if (taskHistory.isNotEmpty()) {
-                        OutlinedButton(
-                            onClick = { taskHistory = emptyList() },
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = AuraOnSurfaceMuted
-                            ),
-                            border = ButtonDefaults.outlinedButtonBorder.copy(
-                                brush = androidx.compose.ui.graphics.SolidColor(AuraSurfaceVariant)
-                            ),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text(
-                                text = "Clear",
-                                style = MaterialTheme.typography.labelSmall
-                            )
-                        }
-                    }
-                }
-            }
-
-            if (taskHistory.isEmpty()) {
+            if (!loading && records.isEmpty()) {
                 item {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 32.dp),
-                        contentAlignment = Alignment.Center
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = palette.surfaceVariant),
+                        shape = RoundedCornerShape(16.dp)
                     ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(20.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                Icons.Filled.HistoryToggleOff,
+                                Icons.Filled.HourglassEmpty,
                                 contentDescription = null,
-                                tint = AuraOnSurfaceMuted,
-                                modifier = Modifier.size(48.dp)
+                                tint = palette.onSurfaceMuted
                             )
+                            Spacer(Modifier.width(12.dp))
                             Text(
-                                text = "No task history",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = AuraOnSurfaceMuted
+                                text = "No recorded activity yet. Tool executions, permission " +
+                                    "changes and model loads appear here after you use the agent.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = palette.onSurfaceMuted
                             )
                         }
                     }
                 }
-            } else {
-                items(taskHistory) { task ->
-                    TaskHistoryItem(task = task)
+            }
+            items(records) { record ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (record.event.contains("failed", ignoreCase = true))
+                            AuraError.copy(alpha = 0.10f) else palette.surface
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = eventLabel(record.event),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (record.event.contains("failed", ignoreCase = true))
+                                    AuraError else AuraCyan
+                            )
+                            Text(
+                                text = displayTimestamp(record.timestamp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = palette.onSurfaceMuted
+                            )
+                        }
+                        Text(
+                            text = record.detail,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = palette.onSurface,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TaskHistoryItem(task: TaskRecord) {
-    val (statusColor, statusText) = when (task.status) {
-        TaskStatus.Completed -> AuraSuccess to "Completed"
-        TaskStatus.Failed -> AuraError to "Failed"
-        TaskStatus.Running -> AuraCyan to "Running"
-    }
-    val statusIcon = when (task.status) {
-        TaskStatus.Completed -> Icons.Filled.CheckCircle
-        TaskStatus.Failed -> Icons.Filled.Error
-        TaskStatus.Running -> Icons.Filled.PlayCircle
-    }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = AuraSurface)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Icon(
-                statusIcon,
-                contentDescription = statusText,
-                tint = statusColor,
-                modifier = Modifier.size(24.dp)
-            )
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = task.description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = AuraOnBackground
-                )
-                Text(
-                    text = task.timestamp,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = AuraOnSurfaceMuted
-                )
-            }
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = statusColor.copy(alpha = 0.12f)
-            ) {
-                Text(
-                    text = statusText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = statusColor,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                )
             }
         }
     }

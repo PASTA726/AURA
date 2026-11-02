@@ -20,6 +20,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import app.aura.ui.screens.*
+import app.aura.ui.theme.AuraCyan
+import app.aura.ui.theme.LocalAuraPalette
 
 sealed class Screen(val route: String, val label: String, val icon: ImageVector) {
     object Home : Screen("home", "Home", Icons.Filled.Home)
@@ -45,9 +47,10 @@ fun AuraNavHost() {
 
     Scaffold(
         bottomBar = {
+            val palette = LocalAuraPalette.current
             NavigationBar(
-                containerColor = app.aura.ui.theme.AuraSurface,
-                contentColor = app.aura.ui.theme.AuraOnSurface,
+                containerColor = palette.surface,
+                contentColor = palette.onSurface,
             ) {
                 bottomNavScreens.forEach { screen ->
                     val selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true
@@ -63,11 +66,11 @@ fun AuraNavHost() {
                             }
                         },
                         colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = app.aura.ui.theme.AuraCyan,
-                            selectedTextColor = app.aura.ui.theme.AuraCyan,
-                            unselectedIconColor = app.aura.ui.theme.AuraOnSurfaceMuted,
-                            unselectedTextColor = app.aura.ui.theme.AuraOnSurfaceMuted,
-                            indicatorColor = app.aura.ui.theme.AuraSurfaceVariant,
+                            selectedIconColor = AuraCyan,
+                            selectedTextColor = AuraCyan,
+                            unselectedIconColor = palette.onSurfaceMuted,
+                            unselectedTextColor = palette.onSurfaceMuted,
+                            indicatorColor = palette.surfaceVariant,
                         )
                     )
                 }
@@ -91,7 +94,7 @@ fun AuraNavHost() {
                 slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.End, tween(200))
             }
         ) {
-            composable(Screen.Home.route) { HomeScreen() }
+            composable(Screen.Home.route) { HomeScreen(onNavigate = { route -> navController.navigate(route) }) }
             composable(Screen.Chat.route) { ChatScreen() }
             composable(Screen.Activity.route) { ActivityScreen() }
             composable(Screen.Memory.route) { MemoryScreen() }

@@ -228,3 +228,63 @@ Located in `/home/teto/Masaüstü/AURA/android/`:
 - On-device: measure load time / tokens-per-second with a ~0.5–3B GGUF (Reeder S71).
 - Token streaming JNI callbacks into Compose UI.
 - Model-picker UI (SAF document picker) + first-run onboarding copy.
+
+---
+
+## 9. Session Log — 2026-11-02 — GUI overhaul: every screen wired to the real engine (v0.1.3)
+
+**User report**: "GUI tamamen bozuk, hiçbir şey olması gerektiği gibi değil."
+**Root cause found in code review**: the Compose screens were a cosmetic mock —
+hardcoded fake chat history, fake memory cards, fake task list, a theme toggle
+that changed nothing, settings sliders disconnected from the engine, and the
+Phase 3 `loadGguf` path reachable from no screen.
+
+### 9.1 Native (Rust) additions
+- `aura-memory`: new readers `list_memories(limit)` + `recent_audit(limit)`
+  (shared `parse_memory_rows`), explicit synchronous insert
+  `save_entry_sync` (the async `MemoryStore::save` delegates to it).
+- `aura-runtime`: UI-facing API — `history_json`,
+  `clear_history` (wipe + fresh `AgentLoop`, keeps permissions/config),
+  `status_json`, `memories_json(limit)`, `save_memory(content)`,
+  `audit_json(limit)`, `set_max_iterations(1..=64)`.
+- JNI bridge: `nativeGetHistory`, `nativeNewConversation`,
+  `nativeGetStatus`, `nativeGetMemories`, `nativeSaveMemory`,
+  `nativeWipeMemories`, `nativeGetAudit`, `nativeSetMaxIterations`
+  (all verified exported in the release `.so`).
+
+### 9.2 Kotlin/UI overhaul
+- `AuraEngine`: wrapped every new JNI entry point with safe fallthroughs.
+- New `EngineState` singleton: engine status snapshot, model load via SAF
+  document picker (copied into `filesDir/models`, single active model kept,
+  nothing auto-downloaded), persisted dark-theme + max-iterations preferences.
+- `Theme`: dark AND light schemes; brand palette distributed through
+  `LocalAuraPalette` CompositionLocal (screens no longer read hardcoded dark
+  constants).
+- `ChatScreen`: loads the REAL persisted conversation on open, real
+  timestamps, engine errors shown verbatim in error color (never silent),
+  "New Conversation" actually wipes history + resets the agent loop.
+- `MemoryScreen`: real SQLite memories, working search/type filter,
+  add-memory dialog (saved into `long_term`), wipe-memories wired, honest
+  empty state.
+- `ActivityScreen`: real audit log (tool executions, permission changes,
+  model loads), honest empty state, refresh button.
+- `SettingsScreen`: working dark-theme switch, GGUF model loader
+  (OpenDocument picker → copy → load → status), max-iterations slider writes
+  through to the engine.
+- `HomeScreen`: real engine/model/conversation status, quick actions, honest
+  "placeholder until you load a model" copy.
+
+### 9.3 Verification
+- `cargo test --all`: 22/22; clippy on touched crates: 0 warnings; fmt clean.
+- ARM64 release rebuild: finished 8s (llama.cpp cached), 8 new JNI symbols in
+  the ELF, still no `libc++_shared.so` NEEDED.
+- Gradle assembleDebug: BUILD SUCCESSFUL; APK 24,600,344 bytes, contains the
+  new `libaura_runtime.so` (9.7 MB unpacked).
+- Real-device runtime behaviour still untested (no emulator/USB device
+  attached) — flagged honestly: SAF picker flow, chat restore, memory add and
+  theme switching need a handset session.
+
+### 9.4 Next
+- Device test session (logcat crash triage if any).
+- Token streaming UI (Phase 3 leftover).
+- Auto-refresh statuses on screen navigation instead of init-only.

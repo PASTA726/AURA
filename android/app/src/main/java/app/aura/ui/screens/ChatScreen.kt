@@ -17,67 +17,116 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
-import app.aura.ui.theme.*
 import app.aura.core.AuraEngine
+import app.aura.ui.theme.*
+import app.aura.ui.theme.LocalAuraPalette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 
 data class ChatMessage(
-    val id: Int,
+    val id: Long,
     val content: String,
     val isUser: Boolean,
-    val timestamp: String = ""
+    val timestamp: String = "",
+    val isError: Boolean = false,
 )
+
+private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
+
+private fun displayTimestamp(rfc3339: String): String = try {
+    ZonedDateTime.parse(rfc3339).format(timeFormatter)
+} catch (_: Throwable) {
+    ""
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen() {
+    val palette = LocalAuraPalette.current
     var inputText by remember { mutableStateOf("") }
     var isAgentTyping by remember { mutableStateOf(false) }
-    val messages = remember {
-        mutableStateListOf(
-            ChatMessage(1, "Hello! I'm AURA, your local AI assistant. How can I help you today?", isUser = false, "10:00 AM"),
-            ChatMessage(2, "Can you help me summarize a document?", isUser = true, "10:01 AM"),
-            ChatMessage(3, "Of course! Please share the document content and I'll create a concise summary for you. I run entirely on your device, so your data stays private.", isUser = false, "10:01 AM")
-        )
-    }
+    var loadingHistory by remember { mutableStateOf(true) }
+    val messages = remember { mutableStateListOf<ChatMessage>() }
+    var nextId by remember { mutableLongStateOf(1L) }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
+
+    // Load the REAL persisted conversation from the engine.
+    LaunchedEffect(Unit) {
+        val history = withContext(Dispatchers.IO) { JSONObject(AuraEngine.getHistoryJson()) }
+        val stored = history.optJSONArray("messages") ?: JSONArray()
+        for (i in 0 until stored.length()) {
+            val m = stored.optJSONObject(i) ?: continue
+            messages.add(
+                ChatMessage(
+                    id = nextId++,
+                    content = m.optString("content"),
+                    isUser = m.optString("role") == "user",
+                    timestamp = displayTimestamp(m.optString("timestamp")),
+                    isError = m.optString("role") == "error"
+                )
+            )
+        }
+        loadingHistory = false
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
+    }
+
+    // Auto-scroll whenever the conversation grows.
+    LaunchedEffect(messages.size) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(AuraBackground)
+            .background(palette.background)
     ) {
-        // TopAppBar
         TopAppBar(
             title = {
                 Column {
                     Text(
                         text = "Chat",
                         style = MaterialTheme.typography.titleLarge,
-                        color = AuraOnBackground
+                        color = palette.onBackground
                     )
                     Text(
-                        text = "AURA • Local",
+                        text = "AURA • Local • On-device",
                         style = MaterialTheme.typography.labelSmall,
-                        color = AuraOnSurfaceMuted
+                        color = palette.onSurfaceMuted
                     )
                 }
             },
             actions = {
-                IconButton(onClick = { messages.clear() }) {
+                IconButton(
+                    onClick = {
+                        coroutineScope.launch {
+                            isAgentTyping = true
+                            withContext(Dispatchers.IO) { AuraEngine.newConversation() }
+                            messages.clear()
+                            isAgentTyping = false
+                        }
+                    },
+                    enabled = !loadingHistory
+                ) {
                     Icon(
                         Icons.Filled.AddComment,
                         contentDescription = "New Conversation",
-                        tint = AuraCyan
+                        tint = palette.onSurface
                     )
                 }
             },
             colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = AuraSurface,
-                titleContentColor = AuraOnBackground
+                containerColor = palette.surface,
+                titleContentColor = palette.onBackground
             )
         )
 
@@ -90,6 +139,23 @@ fun ChatScreen() {
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            if (loadingHistory) {
+                item {
+                    Text(
+                        "Loading stored conversation…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = palette.onSurfaceMuted
+                    )
+                }
+            } else if (messages.isEmpty()) {
+                item {
+                    Text(
+                        "No stored conversation. Say something to AURA.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = palette.onSurfaceMuted
+                    )
+                }
+            }
             items(messages) { message ->
                 ChatBubble(message = message)
             }
@@ -125,14 +191,14 @@ fun ChatScreen() {
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(Modifier.width(4.dp))
-                    Text("Stop generation", style = MaterialTheme.typography.labelMedium)
+                    Text("Emergency stop", style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
 
         // Composer
         Surface(
-            color = AuraSurface,
+            color = palette.surface,
             tonalElevation = 2.dp
         ) {
             Row(
@@ -151,7 +217,7 @@ fun ChatScreen() {
                     placeholder = {
                         Text(
                             "Message AURA…",
-                            color = AuraOnSurfaceMuted,
+                            color = palette.onSurfaceMuted,
                             style = MaterialTheme.typography.bodyMedium
                         )
                     },
@@ -159,12 +225,12 @@ fun ChatScreen() {
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = AuraCyan,
-                        unfocusedBorderColor = AuraSurfaceVariant,
-                        focusedTextColor = AuraOnBackground,
-                        unfocusedTextColor = AuraOnBackground,
+                        unfocusedBorderColor = palette.surfaceVariant,
+                        focusedTextColor = palette.onBackground,
+                        unfocusedTextColor = palette.onBackground,
                         cursorColor = AuraCyan,
-                        focusedContainerColor = AuraSurfaceVariant,
-                        unfocusedContainerColor = AuraSurfaceVariant
+                        focusedContainerColor = palette.surfaceVariant,
+                        unfocusedContainerColor = palette.surfaceVariant
                     ),
                     shape = RoundedCornerShape(16.dp),
                     textStyle = MaterialTheme.typography.bodyMedium
@@ -175,41 +241,42 @@ fun ChatScreen() {
                         if (text.isNotEmpty() && !isAgentTyping) {
                             messages.add(
                                 ChatMessage(
-                                    id = messages.size + 1,
+                                    id = nextId++,
                                     content = text,
                                     isUser = true,
-                                    timestamp = "Now"
+                                    timestamp = ZonedDateTime.now().format(timeFormatter)
                                 )
                             )
                             inputText = ""
                             isAgentTyping = true
                             coroutineScope.launch {
-                                listState.animateScrollToItem(messages.size - 1)
                                 val response = withContext(Dispatchers.IO) {
                                     AuraEngine.processMessage(text)
                                 }
+                                val isEngineError = response.startsWith("Error:")
                                 messages.add(
                                     ChatMessage(
-                                        id = messages.size + 1,
+                                        id = nextId++,
                                         content = response,
                                         isUser = false,
-                                        timestamp = "Now"
+                                        timestamp = ZonedDateTime.now().format(timeFormatter),
+                                        isError = isEngineError
                                     )
                                 )
                                 isAgentTyping = false
-                                listState.animateScrollToItem(messages.size - 1)
                             }
                         }
                     },
+                    enabled = inputText.isNotBlank() && !isAgentTyping,
                     modifier = Modifier
                         .size(48.dp)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(if (inputText.isNotBlank()) AuraCyan else AuraSurfaceVariant)
+                        .background(if (inputText.isNotBlank()) AuraCyan else palette.surfaceVariant)
                 ) {
                     Icon(
                         Icons.Filled.Send,
                         contentDescription = "Send",
-                        tint = if (inputText.isNotBlank()) Color(0xFF001F2A) else AuraOnSurfaceMuted
+                        tint = if (inputText.isNotBlank()) Color(0xFF001F2A) else palette.onSurfaceMuted
                     )
                 }
             }
@@ -219,6 +286,7 @@ fun ChatScreen() {
 
 @Composable
 private fun ChatBubble(message: ChatMessage) {
+    val palette = LocalAuraPalette.current
     val isUser = message.isUser
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -250,20 +318,31 @@ private fun ChatBubble(message: ChatMessage) {
                             bottomEnd = 16.dp
                         )
                     )
-                    .background(if (isUser) AuraViolet else AuraSurfaceVariant)
+                    .background(
+                        when {
+                            message.isError -> AuraError.copy(alpha = 0.16f)
+                            isUser -> AuraViolet
+                            else -> palette.surfaceVariant
+                        }
+                    )
                     .padding(horizontal = 14.dp, vertical = 10.dp)
             ) {
                 Text(
                     text = message.content,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (isUser) Color.White else AuraOnSurface
+                    color = when {
+                        // Engine errors are surfaced verbatim, in error color.
+                        message.isError -> AuraError
+                        isUser -> Color.White
+                        else -> palette.onSurface
+                    }
                 )
             }
             if (message.timestamp.isNotEmpty()) {
                 Text(
                     text = message.timestamp,
                     style = MaterialTheme.typography.labelSmall,
-                    color = AuraOnSurfaceMuted,
+                    color = palette.onSurfaceMuted,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
                 )
             }
@@ -273,6 +352,7 @@ private fun ChatBubble(message: ChatMessage) {
 
 @Composable
 private fun TypingIndicator() {
+    val palette = LocalAuraPalette.current
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.Start,
@@ -290,7 +370,7 @@ private fun TypingIndicator() {
         Spacer(Modifier.width(8.dp))
         Surface(
             shape = RoundedCornerShape(16.dp),
-            color = AuraSurfaceVariant
+            color = palette.surfaceVariant
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -300,7 +380,7 @@ private fun TypingIndicator() {
                 Text(
                     text = "Thinking",
                     style = MaterialTheme.typography.bodySmall,
-                    color = AuraOnSurfaceMuted
+                    color = palette.onSurfaceMuted
                 )
                 CircularProgressIndicator(
                     modifier = Modifier.size(12.dp),

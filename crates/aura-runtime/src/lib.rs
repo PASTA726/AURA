@@ -252,6 +252,153 @@ impl AuraRuntime {
     pub fn memory(&self) -> Option<&MemoryDb> {
         self.memory.as_ref()
     }
+
+    /// Rendered chat history of the latest conversation as JSON for the UI:
+    /// `{"conversationCount":N,"messages":[{"role","content","timestamp"}]}`.
+    /// Timestamps are RFC-3339; the Kotlin layer formats them for display.
+    pub fn history_json(&self) -> String {
+        let mut messages = Vec::new();
+        if let Some(mem) = &self.memory {
+            if let Ok(Some(cid)) = mem.latest_conversation() {
+                if let Ok(msgs) = mem.get_conversation_messages(cid) {
+                    for m in msgs {
+                        messages.push(serde_json::json!({
+                            "role": format!("{:?}", m.role).to_lowercase(),
+                            "content": m.content,
+                            "timestamp": m.timestamp.to_rfc3339(),
+                        }));
+                    }
+                }
+            }
+        }
+        let conversation_count = self
+            .memory
+            .as_ref()
+            .and_then(|m| m.count_conversations().ok())
+            .unwrap_or(0);
+        serde_json::json!({
+            "conversationCount": conversation_count,
+            "messages": messages,
+        })
+        .to_string()
+    }
+
+    /// Delete all chat history (memories + audit preserved). Returns nothing
+    /// meaningful on failure except the JSON error wrapper count; see JNI.
+    pub fn clear_history(&mut self) -> Result<(), AuraError> {
+        if let Some(mem) = &self.memory {
+            mem.wipe_messages()?;
+        }
+        self.start_fresh_agent_loop();
+        Ok(())
+    }
+
+    /// Replace the agent loop with a fresh one (same config, permissions and
+    /// inference settings) so chat truly starts over after history wipe.
+    fn start_fresh_agent_loop(&mut self) {
+        let mut fresh = aura_agent::AgentLoop::new(self.agent_loop.config.clone());
+        fresh.inference_config = self.agent_loop.inference_config.clone();
+        fresh.granted_permissions = self.agent_loop.granted_permissions.clone();
+        self.agent_loop = fresh;
+    }
+
+    /// Engine status for the UI as JSON:
+    /// `{"agentStatus":"idle|paused","modelLoaded":bool,"maxIterations":N,
+    ///   "conversationCount":N}`.
+    pub fn status_json(&self) -> String {
+        let agent_status = match self.get_status() {
+            AgentStatus::Idle => "idle",
+            AgentStatus::Paused => "paused",
+            _ => {
+                // Thinking / Planning / ExecutingTool / WaitingForUser / Error /
+                // Completed are transient single-request states; the UI reads
+                // live state via the chat screen, status JSON reports the rest.
+                "working"
+            }
+        };
+        let model_loaded = self.inference_manager.is_loaded();
+        let conversation_count = self
+            .memory
+            .as_ref()
+            .and_then(|m| m.count_conversations().ok())
+            .unwrap_or(0);
+        serde_json::json!({
+            "agentStatus": agent_status,
+            "modelLoaded": model_loaded,
+            "maxIterations": self.agent_loop.context.max_iterations,
+            "conversationCount": conversation_count,
+        })
+        .to_string()
+    }
+
+    /// Long-term memory entries for the Memory screen as JSON array:
+    /// `[{"id","content","entryType","timestamp","tags"}]` (newest first).
+    pub fn memories_json(&self, limit: u32) -> String {
+        use aura_core::MemoryEntryType;
+        let entries = self
+            .memory
+            .as_ref()
+            .and_then(|m| m.list_memories(limit).ok())
+            .unwrap_or_default();
+        let list: Vec<serde_json::Value> = entries
+            .iter()
+            .map(|e| {
+                let t = match e.entry_type {
+                    MemoryEntryType::Preference => "preference",
+                    MemoryEntryType::LongTerm => "long_term",
+                    MemoryEntryType::Conversation => "conversation",
+                    MemoryEntryType::TaskHistory => "task_history",
+                    MemoryEntryType::TempContext => "temp_context",
+                };
+                serde_json::json!({
+                    "id": e.id.to_string(),
+                    "content": e.content,
+                    "entryType": t,
+                    "timestamp": e.created_at.to_rfc3339(),
+                    "tags": e.tags,
+                })
+            })
+            .collect();
+        serde_json::Value::Array(list).to_string()
+    }
+
+    /// Persist a long-term memory the user typed on the Memory screen.
+    pub fn save_memory(&self, content: &str) -> Result<(), AuraError> {
+        use aura_core::{MemoryEntry, MemoryEntryType};
+        let entry = MemoryEntry::new(content.to_string(), MemoryEntryType::LongTerm);
+        if let Some(mem) = &self.memory {
+            mem.save_entry_sync(&entry)?;
+        }
+        Ok(())
+    }
+
+    /// Latest audit-log records as JSON array:
+    /// `[{"timestamp","event","detail"}]` (newest first).
+    pub fn audit_json(&self, limit: u32) -> String {
+        let records = self
+            .memory
+            .as_ref()
+            .and_then(|m| m.recent_audit(limit).ok())
+            .unwrap_or_default();
+        let list: Vec<serde_json::Value> = records
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "timestamp": r.timestamp.to_rfc3339(),
+                    "event": r.event_type,
+                    "detail": r.description,
+                })
+            })
+            .collect();
+        serde_json::Value::Array(list).to_string()
+    }
+
+    /// Clamp the agent's planning-iteration budget (Settings slider).
+    pub fn set_max_iterations(&mut self, n: u32) {
+        let n = n.clamp(1, 64);
+        self.agent_loop.config.max_iterations = n;
+        self.agent_loop.context.max_iterations = n;
+    }
 }
 
 /// GGUF load pipeline shared by the async API and the JNI blocking wrapper:
@@ -409,6 +556,171 @@ pub mod jni_bridge {
     ) {
         if ptr != 0 {
             let _ = unsafe { Box::from_raw(ptr as *mut AuraRuntime) };
+        }
+    }
+
+    /// Chat history of the latest conversation (JSON) for the Chat screen.
+    #[no_mangle]
+    pub extern "system" fn Java_app_aura_core_AuraEngine_nativeGetHistory(
+        env: JNIEnv,
+        _class: JClass,
+        ptr: jlong,
+    ) -> jstring {
+        let payload: serde_json::Value = if ptr == 0 {
+            serde_json::json!({
+                "conversationCount": 0,
+                "messages": [],
+                "error": "engine not initialized"
+            })
+        } else {
+            let runtime = unsafe { &*(ptr as *const AuraRuntime) };
+            serde_json::from_str(&runtime.history_json()).unwrap_or(serde_json::Value::Null)
+        };
+        env.new_string(payload.to_string()).unwrap().into_raw()
+    }
+
+    /// Start a new conversation: wipes chat history and resets the agent loop.
+    /// Memories and the audit log are preserved.
+    #[no_mangle]
+    pub extern "system" fn Java_app_aura_core_AuraEngine_nativeNewConversation(
+        env: JNIEnv,
+        _class: JClass,
+        ptr: jlong,
+    ) -> jstring {
+        let payload: serde_json::Value = if ptr == 0 {
+            serde_json::json!({ "ok": false, "error": "engine not initialized" })
+        } else {
+            let runtime = unsafe { &mut *(ptr as *mut AuraRuntime) };
+            match runtime.clear_history() {
+                Ok(()) => serde_json::json!({ "ok": true }),
+                Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
+            }
+        };
+        env.new_string(payload.to_string()).unwrap().into_raw()
+    }
+
+    /// Engine status (JSON) for the Home and Settings screens.
+    #[no_mangle]
+    pub extern "system" fn Java_app_aura_core_AuraEngine_nativeGetStatus(
+        env: JNIEnv,
+        _class: JClass,
+        ptr: jlong,
+    ) -> jstring {
+        let payload: serde_json::Value = if ptr == 0 {
+            serde_json::json!({
+                "agentStatus": "paused",
+                "modelLoaded": false,
+                "maxIterations": 0,
+                "conversationCount": 0,
+                "error": "engine not initialized"
+            })
+        } else {
+            let runtime = unsafe { &*(ptr as *const AuraRuntime) };
+            serde_json::from_str(&runtime.status_json()).unwrap_or(serde_json::Value::Null)
+        };
+        env.new_string(payload.to_string()).unwrap().into_raw()
+    }
+
+    /// Long-term memory entries (JSON array, newest first).
+    #[no_mangle]
+    pub extern "system" fn Java_app_aura_core_AuraEngine_nativeGetMemories(
+        env: JNIEnv,
+        _class: JClass,
+        ptr: jlong,
+        jlimit: jni::sys::jint,
+    ) -> jstring {
+        let payload: serde_json::Value = if ptr == 0 {
+            serde_json::json!([])
+        } else {
+            let runtime = unsafe { &*(ptr as *const AuraRuntime) };
+            serde_json::from_str(&runtime.memories_json(jlimit.max(1) as u32))
+                .unwrap_or(serde_json::Value::Null)
+        };
+        env.new_string(payload.to_string()).unwrap().into_raw()
+    }
+
+    /// Save a long-term memory entry typed by the user.
+    #[no_mangle]
+    pub extern "system" fn Java_app_aura_core_AuraEngine_nativeSaveMemory(
+        mut env: JNIEnv,
+        _class: JClass,
+        ptr: jlong,
+        jcontent: JString,
+    ) -> jstring {
+        let content: String = match env.get_string(&jcontent) {
+            Ok(s) => s.into(),
+            Err(_) => {
+                let output = env
+                    .new_string(r#"{"ok":false,"error":"invalid content"}"#)
+                    .unwrap();
+                return output.into_raw();
+            }
+        };
+        let payload: serde_json::Value = if ptr == 0 {
+            serde_json::json!({ "ok": false, "error": "engine not initialized" })
+        } else {
+            let runtime = unsafe { &*(ptr as *const AuraRuntime) };
+            match runtime.save_memory(&content) {
+                Ok(()) => serde_json::json!({ "ok": true }),
+                Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
+            }
+        };
+        env.new_string(payload.to_string()).unwrap().into_raw()
+    }
+
+    /// Delete all long-term memory entries.
+    #[no_mangle]
+    pub extern "system" fn Java_app_aura_core_AuraEngine_nativeWipeMemories(
+        env: JNIEnv,
+        _class: JClass,
+        ptr: jlong,
+    ) -> jstring {
+        let payload: serde_json::Value = if ptr == 0 {
+            serde_json::json!({ "ok": false, "error": "engine not initialized" })
+        } else {
+            let runtime = unsafe { &*(ptr as *mut AuraRuntime) };
+            match runtime
+                .memory()
+                .ok_or_else(|| AuraError::MemoryError("no memory store".into()))
+                .and_then(|m| m.wipe_memories())
+            {
+                Ok(()) => serde_json::json!({ "ok": true }),
+                Err(e) => serde_json::json!({ "ok": false, "error": e.to_string() }),
+            }
+        };
+        env.new_string(payload.to_string()).unwrap().into_raw()
+    }
+
+    /// Latest audit-log records (JSON array, newest first) for the Activity
+    /// screen — real tool actions/model loads/permission changes.
+    #[no_mangle]
+    pub extern "system" fn Java_app_aura_core_AuraEngine_nativeGetAudit(
+        env: JNIEnv,
+        _class: JClass,
+        ptr: jlong,
+        jlimit: jni::sys::jint,
+    ) -> jstring {
+        let payload: serde_json::Value = if ptr == 0 {
+            serde_json::json!([])
+        } else {
+            let runtime = unsafe { &*(ptr as *const AuraRuntime) };
+            serde_json::from_str(&runtime.audit_json(jlimit.max(1) as u32))
+                .unwrap_or(serde_json::Value::Null)
+        };
+        env.new_string(payload.to_string()).unwrap().into_raw()
+    }
+
+    /// Clamp & set the agent's planning-iteration budget (Settings slider).
+    #[no_mangle]
+    pub extern "system" fn Java_app_aura_core_AuraEngine_nativeSetMaxIterations(
+        _env: JNIEnv,
+        _class: JClass,
+        ptr: jlong,
+        value: jni::sys::jint,
+    ) {
+        if ptr != 0 {
+            let runtime = unsafe { &mut *(ptr as *mut AuraRuntime) };
+            runtime.set_max_iterations(value.max(1) as u32);
         }
     }
 }

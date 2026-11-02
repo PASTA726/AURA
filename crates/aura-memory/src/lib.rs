@@ -5,6 +5,15 @@ use uuid::Uuid;
 
 use aura_core::{AuraError, MemoryEntry, MemoryEntryType, MemoryStore, Message, MessageRole};
 
+/// One row of the persistent audit log (tool actions, model loads, permission
+/// changes). Surfaced verbatim to the Activity screen.
+#[derive(Debug, Clone)]
+pub struct AuditRecord {
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub event_type: String,
+    pub description: String,
+}
+
 pub struct MemoryDb {
     conn: Mutex<Connection>,
 }
@@ -282,22 +291,94 @@ impl MemoryDb {
             .map_err(|e| AuraError::MemoryError(format!("Wipe memories failed: {e}")))?;
         Ok(())
     }
-}
 
-#[async_trait]
-impl MemoryStore for MemoryDb {
-    async fn save(&self, entry: MemoryEntry) -> Result<(), AuraError> {
+    /// Most recent memories, newest first (for the Memory screen).
+    pub fn list_memories(&self, limit: u32) -> Result<Vec<MemoryEntry>, AuraError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuraError::MemoryError(format!("Lock error: {e}")))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, content, entry_type, created_at, tags FROM memories
+             ORDER BY created_at DESC LIMIT ?1",
+            )
+            .map_err(|e| AuraError::MemoryError(format!("Prepare failed: {e}")))?;
+
+        let rows = stmt
+            .query_map(params![limit], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|e| AuraError::MemoryError(format!("Query failed: {e}")))?;
+
+        parse_memory_rows(
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| AuraError::MemoryError(format!("Row error: {e}")))?,
+        )
+    }
+
+    /// Latest audit-log records, newest first (for the Activity screen).
+    pub fn recent_audit(&self, limit: u32) -> Result<Vec<AuditRecord>, AuraError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| AuraError::MemoryError(format!("Lock error: {e}")))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT timestamp, event_type, description FROM audit_log
+             ORDER BY id DESC LIMIT ?1",
+            )
+            .map_err(|e| AuraError::MemoryError(format!("Prepare failed: {e}")))?;
+
+        let rows = stmt
+            .query_map(params![limit], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| AuraError::MemoryError(format!("Query failed: {e}")))?;
+
+        let mut result = Vec::new();
+        for row in rows {
+            let (ts_str, event_type, description) =
+                row.map_err(|e| AuraError::MemoryError(format!("Row error: {e}")))?;
+            result.push(AuditRecord {
+                timestamp: chrono::DateTime::parse_from_rfc3339(&ts_str)
+                    .map_err(|e| AuraError::MemoryError(format!("Timestamp parse: {e}")))?
+                    .with_timezone(&chrono::Utc),
+                event_type,
+                description,
+            });
+        }
+        Ok(result)
+    }
+
+    /// Synchronous insert shared by the async [`MemoryStore`] trait and the
+    /// UI-facing synchronous paths (JNI).
+    pub fn save_entry_sync(&self, entry: &MemoryEntry) -> Result<(), AuraError> {
+        use MemoryEntryType::*;
+
         let conn = self
             .conn
             .lock()
             .map_err(|e| AuraError::MemoryError(format!("Lock error: {e}")))?;
 
         let entry_type_str = match entry.entry_type {
-            MemoryEntryType::Conversation => "conversation",
-            MemoryEntryType::LongTerm => "long_term",
-            MemoryEntryType::Preference => "preference",
-            MemoryEntryType::TaskHistory => "task_history",
-            MemoryEntryType::TempContext => "temp_context",
+            Conversation => "conversation",
+            LongTerm => "long_term",
+            Preference => "preference",
+            TaskHistory => "task_history",
+            TempContext => "temp_context",
         };
 
         let tags_json = serde_json::to_string(&entry.tags)
@@ -318,6 +399,53 @@ impl MemoryStore for MemoryDb {
 
         Ok(())
     }
+}
+
+/// Shared row→`MemoryEntry` conversion for `list_memories` / `search`.
+fn parse_memory_rows(
+    rows: Vec<(String, String, String, String, String)>,
+) -> Result<Vec<MemoryEntry>, AuraError> {
+    let mut result = Vec::new();
+    for (id_str, content, entry_type_str, created_at_str, tags_str) in rows {
+        let id = Uuid::parse_str(&id_str)
+            .map_err(|e| AuraError::MemoryError(format!("UUID parse: {e}")))?;
+
+        let entry_type = match entry_type_str.as_str() {
+            "conversation" => MemoryEntryType::Conversation,
+            "long_term" => MemoryEntryType::LongTerm,
+            "preference" => MemoryEntryType::Preference,
+            "task_history" => MemoryEntryType::TaskHistory,
+            "temp_context" => MemoryEntryType::TempContext,
+            other => {
+                return Err(AuraError::MemoryError(format!(
+                    "Unknown memory type: {other}"
+                )))
+            }
+        };
+
+        let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
+            .map_err(|e| AuraError::MemoryError(format!("Timestamp parse: {e}")))?
+            .with_timezone(&chrono::Utc);
+
+        let tags = serde_json::from_str::<Vec<String>>(&tags_str)
+            .map_err(|e| AuraError::MemoryError(format!("Tags parse: {e}")))?;
+
+        result.push(MemoryEntry {
+            id,
+            content,
+            entry_type,
+            created_at,
+            tags,
+        });
+    }
+    Ok(result)
+}
+
+#[async_trait]
+impl MemoryStore for MemoryDb {
+    async fn save(&self, entry: MemoryEntry) -> Result<(), AuraError> {
+        self.save_entry_sync(&entry)
+    }
 
     async fn search(&self, query: &str) -> Result<Vec<MemoryEntry>, AuraError> {
         let conn = self
@@ -333,52 +461,20 @@ impl MemoryStore for MemoryDb {
 
         let entries = stmt
             .query_map(params![pattern], |row| {
-                let id_str: String = row.get(0)?;
-                let content: String = row.get(1)?;
-                let entry_type_str: String = row.get(2)?;
-                let created_at_str: String = row.get(3)?;
-                let tags_str: String = row.get(4)?;
-                Ok((id_str, content, entry_type_str, created_at_str, tags_str))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
             })
             .map_err(|e| AuraError::MemoryError(format!("Query failed: {e}")))?;
 
-        let mut result = Vec::new();
-        for row in entries {
-            let (id_str, content, entry_type_str, created_at_str, tags_str) =
-                row.map_err(|e| AuraError::MemoryError(format!("Row error: {e}")))?;
-
-            let id = Uuid::parse_str(&id_str)
-                .map_err(|e| AuraError::MemoryError(format!("UUID parse: {e}")))?;
-
-            let entry_type = match entry_type_str.as_str() {
-                "conversation" => MemoryEntryType::Conversation,
-                "long_term" => MemoryEntryType::LongTerm,
-                "preference" => MemoryEntryType::Preference,
-                "task_history" => MemoryEntryType::TaskHistory,
-                "temp_context" => MemoryEntryType::TempContext,
-                other => {
-                    return Err(AuraError::MemoryError(format!(
-                        "Unknown entry type: {other}"
-                    )))
-                }
-            };
-
-            let created_at = chrono::DateTime::parse_from_rfc3339(&created_at_str)
-                .map_err(|e| AuraError::MemoryError(format!("Timestamp parse: {e}")))?
-                .with_timezone(&chrono::Utc);
-
-            let tags: Vec<String> = serde_json::from_str(&tags_str)
-                .map_err(|e| AuraError::MemoryError(format!("Tags parse: {e}")))?;
-
-            result.push(MemoryEntry {
-                id,
-                content,
-                entry_type,
-                created_at,
-                tags,
-            });
-        }
-
-        Ok(result)
+        parse_memory_rows(
+            entries
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| AuraError::MemoryError(format!("Row error: {e}")))?,
+        )
     }
 }

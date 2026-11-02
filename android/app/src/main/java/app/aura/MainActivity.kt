@@ -7,24 +7,24 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
-import app.aura.core.AuraEngine
-import app.aura.ui.theme.AuraTheme
+import app.aura.ui.EngineState
 import app.aura.ui.navigation.AuraNavHost
-import kotlin.concurrent.thread
+import app.aura.ui.theme.AuraTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        
+
         // Initialize Rust Core engine asynchronously with persistent storage,
         // so conversations survive process restarts (SQLite under filesDir).
-        thread {
-            AuraEngine.initialize(filesDir.absolutePath)
-        }
+        EngineState.initializeAsync(this)
 
         setContent {
-            AuraTheme {
+            val isDark by EngineState.isDarkTheme.collectAsState()
+            AuraTheme(darkTheme = isDark) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     AuraNavHost()
                 }

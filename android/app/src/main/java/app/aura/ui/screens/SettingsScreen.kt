@@ -1,5 +1,8 @@
 package app.aura.ui.screens
 
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -10,30 +13,67 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import app.aura.ui.EngineState
 import app.aura.ui.theme.*
+import app.aura.ui.theme.LocalAuraPalette
+import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen() {
-    var darkTheme by remember { mutableStateOf(true) }
-    var networkAccess by remember { mutableStateOf(false) }
-    var maxIterations by remember { mutableStateOf(20f) }
+    val palette = LocalAuraPalette.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val isDark by EngineState.isDarkTheme.collectAsState()
+    val maxIterations by EngineState.maxIterations.collectAsState()
+    val modelLoaded by EngineState.modelLoaded.collectAsState()
+    val modelInfo by EngineState.modelInfo.collectAsState()
+
+    var modelStatusMessage by remember { mutableStateOf<String?>(null) }
+    var isImporting by remember { mutableStateOf(false) }
+
+    // SAF file picker: user picks a .gguf model; copied into filesDir/models
+    // then loaded through the engine. Nothing is downloaded automatically.
+    val pickModelLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                isImporting = true
+                modelStatusMessage = null
+                val result = JSONObject(
+                    EngineState.importAndLoadModel(context, uri)
+                )
+                modelStatusMessage =
+                    if (result.optBoolean("ok", false)) {
+                        "Model loaded: ${result.optString("name")}"
+                    } else {
+                        "Model load failed: ${result.optString("error", "unknown")}"
+                    }
+                isImporting = false
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(AuraBackground)
+            .background(palette.background)
     ) {
         TopAppBar(
             title = {
                 Text(
                     text = "Settings",
                     style = MaterialTheme.typography.titleLarge,
-                    color = AuraOnBackground
+                    color = palette.onBackground
                 )
             },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = AuraSurface)
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = palette.surface)
         )
 
         LazyColumn(
@@ -45,293 +85,185 @@ fun SettingsScreen() {
             item {
                 SettingsSection(title = "GENERAL") {
                     SettingsToggleItem(
-                        title = "Dark Theme",
-                        subtitle = if (darkTheme) "Dark mode active" else "Light mode active",
+                        title = "Dark theme",
+                        subtitle = if (isDark) "Dark mode active" else "Light mode active",
                         icon = Icons.Filled.DarkMode,
-                        checked = darkTheme,
-                        onCheckedChange = { darkTheme = it }
+                        checked = isDark,
+                        onCheckedChange = { EngineState.setDarkTheme(context, it) }
                     )
-                    HorizontalDivider(color = AuraSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
+                    HorizontalDivider(color = palette.surfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
                     SettingsItem(
                         title = "Language",
                         subtitle = "English",
                         icon = Icons.Filled.Language,
-                        onClick = {}
+                        onClick = { }
                     )
                 }
             }
 
-            // Model section
+            // Model section — real GGUF loading
             item {
-                SettingsSection(title = "MODEL") {
-                    // No model card
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Icon(
-                                    Icons.Filled.Memory,
-                                    contentDescription = null,
-                                    tint = AuraOnSurfaceMuted,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Column {
-                                    Text(
-                                        text = "No model loaded",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = AuraOnSurface
-                                    )
-                                    Text(
-                                        text = "Import a GGUF model to get started",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = AuraOnSurfaceMuted
-                                    )
-                                }
-                            }
-                            Button(
-                                onClick = {},
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = AuraCyan.copy(alpha = 0.15f),
-                                    contentColor = AuraCyan
-                                ),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(Icons.Filled.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text("Import GGUF Model", style = MaterialTheme.typography.labelMedium)
-                            }
-                        }
-                    }
-                    HorizontalDivider(color = AuraSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
-                    SettingsItem(
-                        title = "Context Length",
-                        subtitle = "4096 tokens",
-                        icon = Icons.Filled.Tune,
-                        onClick = {}
-                    )
-                }
-            }
-
-            // Agent section
-            item {
-                SettingsSection(title = "AGENT") {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
+                SettingsSection(title = "MODEL (ON-DEVICE GGUF)") {
+                    Column(modifier = Modifier.padding(16.dp)) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Filled.Loop,
-                                    contentDescription = null,
-                                    tint = AuraOnSurfaceMuted,
-                                    modifier = Modifier.size(20.dp)
+                            Icon(
+                                Icons.Filled.Memory,
+                                contentDescription = null,
+                                tint = if (modelLoaded) AuraCyan else palette.onSurfaceMuted
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (modelLoaded) {
+                                        modelInfo?.optString("name")?.takeIf { it.isNotBlank() }
+                                            ?: "Model loaded"
+                                    } else "No model loaded",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = palette.onBackground
                                 )
                                 Text(
-                                    text = "Max Iterations",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = AuraOnSurface
+                                    text = if (modelLoaded) {
+                                        val info = modelInfo
+                                        val quant = info?.optString("quantization").orEmpty()
+                                        val ctx = info?.optString("contextLength").orEmpty()
+                                        buildString {
+                                            append("On-device inference ready")
+                                            if (quant.isNotBlank() && quant != "unknown")
+                                                append(" • Q: ").append(quant)
+                                            if (ctx.isNotBlank())
+                                                append(" • ctx ").append(ctx)
+                                        }
+                                    } else {
+                                        "The agent runs on a local placeholder until you load a GGUF model"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = palette.onSurfaceMuted
                                 )
                             }
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = {
+                                pickModelLauncher.launch(arrayOf("*/*"))
+                            },
+                            enabled = !isImporting,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (isImporting) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text("Importing & loading…")
+                            } else {
+                                Icon(Icons.Filled.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Load GGUF model from device")
+                            }
+                        }
+                        modelStatusMessage?.let {
+                            Spacer(Modifier.height(8.dp))
                             Text(
-                                text = maxIterations.toInt().toString(),
-                                style = MaterialTheme.typography.titleMedium,
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (it.startsWith("Model loaded")) AuraSuccess else AuraError
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = "Model files stay in the app's private storage. " +
+                                "Nothing is downloaded from the internet — you choose the file.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = palette.onSurfaceMuted
+                        )
+                    }
+                }
+            }
+
+            // Agent limits — real engine connection
+            item {
+                SettingsSection(title = "AGENT LIMITS") {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                "Max planning iterations",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = palette.onBackground
+                            )
+                            Text(
+                                maxIterations.toString(),
+                                style = MaterialTheme.typography.titleSmall,
                                 color = AuraCyan
                             )
                         }
                         Slider(
-                            value = maxIterations,
-                            onValueChange = { maxIterations = it },
-                            valueRange = 1f..50f,
-                            steps = 48,
+                            value = maxIterations.toFloat(),
+                            onValueChange = { v ->
+                                EngineState.setMaxIterationsStored(context, v.toInt().coerceIn(1, 64))
+                            },
+                            valueRange = 1f..64f,
+                            steps = 62,
                             colors = SliderDefaults.colors(
                                 thumbColor = AuraCyan,
                                 activeTrackColor = AuraCyan,
-                                inactiveTrackColor = AuraSurfaceVariant
+                                inactiveTrackColor = palette.surfaceVariant
                             )
                         )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("1", style = MaterialTheme.typography.labelSmall, color = AuraOnSurfaceMuted)
-                            Text("50", style = MaterialTheme.typography.labelSmall, color = AuraOnSurfaceMuted)
-                        }
-                    }
-                    HorizontalDivider(color = AuraSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
-                    SettingsToggleItem(
-                        title = "Network Access",
-                        subtitle = if (networkAccess) "Agent can access the internet" else "Agent runs fully offline",
-                        icon = Icons.Filled.Wifi,
-                        checked = networkAccess,
-                        onCheckedChange = { networkAccess = it }
-                    )
-                }
-            }
-
-            // Privacy section
-            item {
-                SettingsSection(title = "PRIVACY") {
-                    // Info card
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        color = AuraCyan.copy(alpha = 0.08f)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            Icon(
-                                Icons.Filled.Shield,
-                                contentDescription = null,
-                                tint = AuraCyan,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Text(
-                                text = "Network access is disabled by default. All processing happens locally on your device.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = AuraOnSurface
-                            )
-                        }
-                    }
-                    HorizontalDivider(color = AuraSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
-                    OutlinedButton(
-                        onClick = {},
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AuraError),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(
-                            brush = androidx.compose.ui.graphics.SolidColor(AuraError.copy(alpha = 0.5f))
-                        ),
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Icon(Icons.Filled.DeleteForever, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Clear All Data", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            "Hard cap on one request's reasoning→tool→answer loop steps (1–64).",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = palette.onSurfaceMuted
+                        )
                     }
                 }
             }
 
-            // About section
+            // About
             item {
                 SettingsSection(title = "ABOUT") {
-                    SettingsItem(
-                        title = "AURA",
-                        subtitle = "Version 0.1.0",
-                        icon = Icons.Filled.Info,
-                        onClick = {}
-                    )
-                    HorizontalDivider(color = AuraSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
-                    Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Icon(
-                                    Icons.Filled.Code,
-                                    contentDescription = null,
-                                    tint = AuraOnSurfaceMuted,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Text(
-                                    text = "Technology Stack",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = AuraOnSurface
-                                )
-                            }
-                            Text(
-                                text = "Built with Rust + Jetpack Compose",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = AuraOnSurfaceMuted,
-                                modifier = Modifier.padding(start = 30.dp)
-                            )
-                        }
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "AURA — local-first autonomous agent",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = palette.onBackground
+                        )
+                        Text(
+                            "Rust core + llama.cpp GGUF inference on-device. All data stays " +
+                                "in this app's private storage; no network access is used by the agent.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = palette.onSurfaceMuted,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
                     }
                 }
             }
-
-            item { Spacer(Modifier.height(16.dp)) }
         }
     }
 }
 
 @Composable
-private fun SettingsSection(
-    title: String,
-    content: @Composable ColumnScope.() -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+private fun SettingsSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    val palette = LocalAuraPalette.current
+    Column {
         Text(
             text = title,
             style = MaterialTheme.typography.labelMedium,
-            color = AuraOnSurfaceMuted,
-            modifier = Modifier.padding(horizontal = 4.dp)
+            color = palette.onSurfaceMuted
         )
+        Spacer(Modifier.height(8.dp))
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = AuraSurface)
+            colors = CardDefaults.cardColors(containerColor = palette.surface)
         ) {
             Column(content = content)
-        }
-    }
-}
-
-@Composable
-private fun SettingsItem(
-    title: String,
-    subtitle: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    onClick: () -> Unit
-) {
-    Surface(
-        onClick = onClick,
-        color = AuraSurface,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = AuraOnSurfaceMuted,
-                modifier = Modifier.size(20.dp)
-            )
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(text = title, style = MaterialTheme.typography.bodyMedium, color = AuraOnSurface)
-                Text(text = subtitle, style = MaterialTheme.typography.bodySmall, color = AuraOnSurfaceMuted)
-            }
-            Icon(
-                Icons.Filled.ChevronRight,
-                contentDescription = null,
-                tint = AuraOnSurfaceMuted,
-                modifier = Modifier.size(18.dp)
-            )
         }
     }
 }
@@ -344,32 +276,55 @@ private fun SettingsToggleItem(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
+    val palette = LocalAuraPalette.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = AuraOnSurfaceMuted,
-            modifier = Modifier.size(20.dp)
-        )
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(text = title, style = MaterialTheme.typography.bodyMedium, color = AuraOnSurface)
-            Text(text = subtitle, style = MaterialTheme.typography.bodySmall, color = AuraOnSurfaceMuted)
+        Icon(icon, contentDescription = null, tint = palette.onSurface, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, color = palette.onBackground)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = palette.onSurfaceMuted)
         }
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
             colors = SwitchDefaults.colors(
                 checkedThumbColor = AuraCyan,
-                checkedTrackColor = AuraCyan.copy(alpha = 0.3f),
-                uncheckedThumbColor = AuraOnSurfaceMuted,
-                uncheckedTrackColor = AuraSurfaceVariant
+                checkedTrackColor = AuraCyan.copy(alpha = 0.5f)
             )
+        )
+    }
+}
+
+@Composable
+private fun SettingsItem(
+    title: String,
+    subtitle: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit
+) {
+    val palette = LocalAuraPalette.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Transparent)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = palette.onSurface, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, color = palette.onBackground)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = palette.onSurfaceMuted)
+        }
+        Icon(
+            Icons.Filled.ChevronRight,
+            contentDescription = null,
+            tint = palette.onSurfaceMuted
         )
     }
 }
