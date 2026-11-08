@@ -151,6 +151,7 @@ object EngineState {
     suspend fun importAndLoadModel(context: Context, uri: Uri): String =
         withContext(Dispatchers.IO) {
             try {
+                awaitEngine()
                 val displayName = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                     val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                     if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null

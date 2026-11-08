@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="432" viewBox="0 0 432 432">
+  <defs>
+    <linearGradient id="a" x1="103" y1="315" x2="317" y2="99" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00D4FF"/>
+      <stop offset=".52" stop-color="#72F5FF"/>
+      <stop offset="1" stop-color="#9B5CFF"/>
+    </linearGradient>
+    <linearGradient id="orbit" x1="83" y1="266" x2="354" y2="191" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00D4FF"/>
+      <stop offset=".58" stop-color="#37E9FF"/>
+      <stop offset="1" stop-color="#8B5CF6"/>
+    </linearGradient>
+  </defs>
+  <!-- AURA's A: an open, precise monogram with a small core of light. -->
+  <path d="M111 318 204 113c2-5 6-8 12-8s10 3 12 8l93 205h-53l-52-121-52 121z" fill="url(#a)"/>
+  <path d="m185 246 31-72 31 72z" fill="#080B16"/>
+  <path d="M75 253c35-49 107-80 184-78 41 1 75 10 101 25-31 49-103 83-182 82-42 0-77-10-103-29Z" fill="none" stroke="url(#orbit)" stroke-width="13" stroke-linecap="round"/>
+  <circle cx="356" cy="201" r="9" fill="#9B5CFF"/>
+</svg>

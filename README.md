@@ -97,7 +97,7 @@ The resulting APK is generated at:
 
 ---
 
-## 6. Alpha Status (v0.1.4)
+## 6. Alpha Status (v0.1.5-alpha)
 
 Implemented and verified (22/22 cargo tests + 2/2 GGUF smoke tests, zero clippy warnings):
 
@@ -119,6 +119,14 @@ Implemented and verified (22/22 cargo tests + 2/2 GGUF smoke tests, zero clippy 
     release and survives status refreshes; honest UI (no dead options), no
     unnecessary Android permissions (`INTERNET` removed — the agent cannot
     access the network, `allowBackup=false` so SQLite data stays on-device).
+
+- **User-flow fixes** — new in v0.1.5-alpha:
+  - Emergency stop keeps chat input locked until generation has actually
+    returned, so a follow-up message cannot queue behind the stopped request.
+  - Starting a new conversation asks before clearing chat history and reports
+    engine failures instead of silently navigating as if the reset succeeded.
+  - Memory deletion reports failures and keeps the confirmation open; saving a
+    memory or importing a model waits for engine initialization to finish.
 
 - **Real GUI, no scripted demo data** — v0.1.3: every screen is wired to the
   engine. Chat shows the persisted SQLite conversation (and truly resets it), the

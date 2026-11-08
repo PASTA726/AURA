@@ -53,6 +53,8 @@ fun ChatScreen() {
     val palette = LocalAuraPalette.current
     var inputText by remember { mutableStateOf("") }
     var isAgentTyping by remember { mutableStateOf(false) }
+    var stopRequested by remember { mutableStateOf(false) }
+    var newConversationConfirmOpen by remember { mutableStateOf(false) }
     var loadingHistory by remember { mutableStateOf(true) }
     val messages = remember { mutableStateListOf<ChatMessage>() }
     var nextId by remember { mutableLongStateOf(1L) }
@@ -113,29 +115,7 @@ fun ChatScreen() {
             },
             actions = {
                 IconButton(
-                    onClick = {
-                        coroutineScope.launch {
-                            isAgentTyping = true
-                            val result = withContext(Dispatchers.IO) {
-                                JSONObject(AuraEngine.newConversation())
-                            }
-                            if (result.optBoolean("ok", false)) {
-                                messages.clear()
-                            } else {
-                                // Engine refused the wipe — surface it honestly.
-                                messages.add(
-                                    ChatMessage(
-                                        id = nextId++,
-                                        content = "New conversation failed: " +
-                                            result.optString("error", "unknown"),
-                                        isUser = false,
-                                        isError = true
-                                    )
-                                )
-                            }
-                            isAgentTyping = false
-                        }
-                    },
+                    onClick = { newConversationConfirmOpen = true },
                     enabled = !loadingHistory && !isAgentTyping
                 ) {
                     Icon(
@@ -197,11 +177,14 @@ fun ChatScreen() {
             ) {
                 OutlinedButton(
                     onClick = {
-                        coroutineScope.launch {
-                            withContext(Dispatchers.IO) { AuraEngine.emergencyStop() }
+                        if (!stopRequested) {
+                            stopRequested = true
+                            coroutineScope.launch {
+                                withContext(Dispatchers.IO) { AuraEngine.emergencyStop() }
+                            }
                         }
-                        isAgentTyping = false
                     },
+                    enabled = !stopRequested,
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = AuraError),
                     border = ButtonDefaults.outlinedButtonBorder.copy(
                         brush = androidx.compose.ui.graphics.SolidColor(AuraError)
@@ -214,7 +197,10 @@ fun ChatScreen() {
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(Modifier.width(4.dp))
-                    Text("Emergency stop", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        if (stopRequested) "Stopping…" else "Emergency stop",
+                        style = MaterialTheme.typography.labelMedium
+                    )
                 }
             }
         }
@@ -273,21 +259,34 @@ fun ChatScreen() {
                             inputText = ""
                             isAgentTyping = true
                             coroutineScope.launch {
-                                val response = withContext(Dispatchers.IO) {
-                                    EngineState.awaitEngine()
-                                    AuraEngine.processMessage(text)
-                                }
-                                val isEngineError = response.startsWith("Error:")
-                                messages.add(
-                                    ChatMessage(
-                                        id = nextId++,
-                                        content = response,
-                                        isUser = false,
-                                        timestamp = ZonedDateTime.now().format(timeFormatter),
-                                        isError = isEngineError
+                                try {
+                                    val response = withContext(Dispatchers.IO) {
+                                        EngineState.awaitEngine()
+                                        AuraEngine.processMessage(text)
+                                    }
+                                    val isEngineError = response.startsWith("Error:")
+                                    messages.add(
+                                        ChatMessage(
+                                            id = nextId++,
+                                            content = response,
+                                            isUser = false,
+                                            timestamp = ZonedDateTime.now().format(timeFormatter),
+                                            isError = isEngineError
+                                        )
                                     )
-                                )
-                                isAgentTyping = false
+                                } catch (error: Throwable) {
+                                    messages.add(
+                                        ChatMessage(
+                                            id = nextId++,
+                                            content = "Message failed: ${error.message ?: "unknown error"}",
+                                            isUser = false,
+                                            isError = true
+                                        )
+                                    )
+                                } finally {
+                                    isAgentTyping = false
+                                    stopRequested = false
+                                }
                             }
                         }
                     },
@@ -305,6 +304,57 @@ fun ChatScreen() {
                 }
             }
         }
+    }
+
+    if (newConversationConfirmOpen) {
+        AlertDialog(
+            onDismissRequest = { newConversationConfirmOpen = false },
+            title = { Text("Start a new conversation?") },
+            text = { Text("This clears the current chat history. Stored memories and activity remain.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        newConversationConfirmOpen = false
+                        coroutineScope.launch {
+                            isAgentTyping = true
+                            try {
+                                val result = withContext(Dispatchers.IO) {
+                                    EngineState.awaitEngine()
+                                    JSONObject(AuraEngine.newConversation())
+                                }
+                                if (result.optBoolean("ok", false)) {
+                                    messages.clear()
+                                } else {
+                                    messages.add(
+                                        ChatMessage(
+                                            id = nextId++,
+                                            content = "New conversation failed: ${result.optString("error", "unknown")}",
+                                            isUser = false,
+                                            isError = true
+                                        )
+                                    )
+                                }
+                            } catch (error: Throwable) {
+                                messages.add(
+                                    ChatMessage(
+                                        id = nextId++,
+                                        content = "New conversation failed: ${error.message ?: "unknown error"}",
+                                        isUser = false,
+                                        isError = true
+                                    )
+                                )
+                            } finally {
+                                isAgentTyping = false
+                                stopRequested = false
+                            }
+                        }
+                    }
+                ) { Text("Clear chat") }
+            },
+            dismissButton = {
+                TextButton(onClick = { newConversationConfirmOpen = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 

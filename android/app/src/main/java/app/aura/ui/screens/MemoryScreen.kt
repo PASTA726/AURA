@@ -57,6 +57,8 @@ fun MemoryScreen() {
     var newMemoryText by remember { mutableStateOf("") }
     var addError by remember { mutableStateOf<String?>(null) }
     var wipeConfirmOpen by remember { mutableStateOf(false) }
+    var wipeError by remember { mutableStateOf<String?>(null) }
+    var wipingMemories by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
     fun reload() {
@@ -272,6 +274,7 @@ fun MemoryScreen() {
                         } else {
                             coroutineScope.launch {
                                 val result = withContext(Dispatchers.IO) {
+                                    EngineState.awaitEngine()
                                     JSONObject(AuraEngine.saveMemory(content))
                                 }
                                 if (result.optBoolean("ok", false)) {
@@ -296,27 +299,49 @@ fun MemoryScreen() {
 
     if (wipeConfirmOpen) {
         AlertDialog(
-            onDismissRequest = { wipeConfirmOpen = false },
+            onDismissRequest = { if (!wipingMemories) wipeConfirmOpen = false },
             title = { Text("Delete all memories?") },
             text = {
-                Text(
-                    "This permanently deletes every stored long-term memory. " +
-                        "This cannot be undone."
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "This permanently deletes every stored long-term memory. " +
+                            "This cannot be undone."
+                    )
+                    wipeError?.let { Text(it, color = AuraError, style = MaterialTheme.typography.bodySmall) }
+                }
             },
             confirmButton = {
                 TextButton(
+                    enabled = !wipingMemories,
                     onClick = {
-                        wipeConfirmOpen = false
+                        wipingMemories = true
+                        wipeError = null
                         coroutineScope.launch {
-                            withContext(Dispatchers.IO) { AuraEngine.wipeMemories() }
-                            reload()
+                            try {
+                                EngineState.awaitEngine()
+                                val result = withContext(Dispatchers.IO) {
+                                    JSONObject(AuraEngine.wipeMemories())
+                                }
+                                if (result.optBoolean("ok", false)) {
+                                    wipeConfirmOpen = false
+                                    reload()
+                                } else {
+                                    wipeError = "Could not delete memories: ${result.optString("error", "unknown error")}"
+                                }
+                            } catch (error: Throwable) {
+                                wipeError = "Could not delete memories: ${error.message ?: "unknown error"}"
+                            } finally {
+                                wipingMemories = false
+                            }
                         }
                     }
-                ) { Text("Delete all", color = AuraError) }
+                ) { Text(if (wipingMemories) "Deleting…" else "Delete all", color = AuraError) }
             },
             dismissButton = {
-                TextButton(onClick = { wipeConfirmOpen = false }) { Text("Cancel") }
+                TextButton(
+                    enabled = !wipingMemories,
+                    onClick = { wipeConfirmOpen = false }
+                ) { Text("Cancel") }
             }
         )
     }

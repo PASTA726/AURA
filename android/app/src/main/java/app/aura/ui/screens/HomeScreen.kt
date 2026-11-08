@@ -12,7 +12,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -26,11 +29,15 @@ import app.aura.ui.theme.LocalAuraPalette
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 @Composable
 fun HomeScreen(onNavigate: (route: String) -> Unit = {}) {
     val palette = LocalAuraPalette.current
     val coroutineScope = rememberCoroutineScope()
+    var newConversationConfirmOpen by remember { mutableStateOf(false) }
+    var resetError by remember { mutableStateOf<String?>(null) }
+    var resettingConversation by remember { mutableStateOf(false) }
 
     val engineReady by EngineState.engineReady.collectAsState()
     val agentStatus by EngineState.agentStatus.collectAsState()
@@ -215,16 +222,7 @@ fun HomeScreen(onNavigate: (route: String) -> Unit = {}) {
                     QuickAction(
                         icon = Icons.Filled.Delete,
                         label = "Start a new conversation",
-                        onClick = {
-                            // B12: actually reset the agent BEFORE navigating,
-                            // so the opened Chat really starts from scratch.
-                            coroutineScope.launch {
-                                EngineState.awaitEngine()
-                                withContext(Dispatchers.IO) { AuraEngine.newConversation() }
-                                EngineState.refreshStatus()
-                                onNavigate("chat")
-                            }
-                        },
+                        onClick = { newConversationConfirmOpen = true },
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -255,6 +253,55 @@ fun HomeScreen(onNavigate: (route: String) -> Unit = {}) {
                 }
             }
         }
+    }
+
+    if (newConversationConfirmOpen) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!resettingConversation) newConversationConfirmOpen = false
+            },
+            title = { Text("Start a new conversation?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("This clears the current chat history. Stored memories and activity remain.")
+                    resetError?.let { Text(it, color = AuraError, style = MaterialTheme.typography.bodySmall) }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !resettingConversation,
+                    onClick = {
+                        resettingConversation = true
+                        resetError = null
+                        coroutineScope.launch {
+                            try {
+                                EngineState.awaitEngine()
+                                val result = withContext(Dispatchers.IO) {
+                                    JSONObject(AuraEngine.newConversation())
+                                }
+                                if (result.optBoolean("ok", false)) {
+                                    EngineState.refreshStatus()
+                                    newConversationConfirmOpen = false
+                                    onNavigate("chat")
+                                } else {
+                                    resetError = "Could not clear chat: ${result.optString("error", "unknown error")}"
+                                }
+                            } catch (error: Throwable) {
+                                resetError = "Could not clear chat: ${error.message ?: "unknown error"}"
+                            } finally {
+                                resettingConversation = false
+                            }
+                        }
+                    }
+                ) { Text(if (resettingConversation) "Starting…" else "Clear chat") }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !resettingConversation,
+                    onClick = { newConversationConfirmOpen = false }
+                ) { Text("Cancel") }
+            }
+        )
     }
 }
 
