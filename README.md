@@ -3,13 +3,13 @@
   <h1>AURA</h1>
   <p><strong>A private AI agent for Android</strong><br />Local models. Useful tools. Your data stays on your device.</p>
   <p>
-    <a href="https://github.com/PASTA726/AURA/releases/tag/v0.1.5-alpha"><img src="https://img.shields.io/badge/alpha-v0.1.5-00D4FF?style=for-the-badge" alt="Latest alpha release v0.1.5" /></a>
+    <a href="https://github.com/PASTA726/AURA/releases/tag/v0.1.6-alpha"><img src="https://img.shields.io/badge/alpha-v0.1.6-00D4FF?style=for-the-badge" alt="Latest alpha release v0.1.6" /></a>
     <img src="https://img.shields.io/badge/platform-Android%208%2B-3DDC84?style=for-the-badge&logo=android&logoColor=white" alt="Android 8 and newer" />
     <img src="https://img.shields.io/badge/architecture-ARM64-7C3AED?style=for-the-badge" alt="ARM64" />
     <img src="https://img.shields.io/badge/Rust-core-000000?style=for-the-badge&logo=rust&logoColor=white" alt="Rust core" />
   </p>
   <p>
-    <a href="https://github.com/PASTA726/AURA/releases/download/v0.1.5-alpha/AURA-v0.1.5-alpha-arm64.apk"><strong>↓ Download the latest APK</strong></a>
+    <a href="https://github.com/PASTA726/AURA/releases/download/v0.1.6-alpha/AURA-v0.1.6-alpha-arm64.apk"><strong>↓ Download the latest APK</strong></a>
     · <a href="#build-from-source">Build from source</a>
     · <a href="docs/ROADMAP.md">Roadmap</a>
   </p>
@@ -40,16 +40,17 @@ Read the [security notes](docs/SECURITY.md) and [architecture overview](docs/ARC
 
 ## Get the alpha
 
-Download **[AURA v0.1.5-alpha for ARM64](https://github.com/PASTA726/AURA/releases/download/v0.1.5-alpha/AURA-v0.1.5-alpha-arm64.apk)** from the [GitHub release page](https://github.com/PASTA726/AURA/releases/tag/v0.1.5-alpha).
+Download **[AURA v0.1.6-alpha for ARM64](https://github.com/PASTA726/AURA/releases/download/v0.1.6-alpha/AURA-v0.1.6-alpha-arm64.apk)** from the [GitHub release page](https://github.com/PASTA726/AURA/releases/tag/v0.1.6-alpha).
 
 The app supports Android 8.0+ (API 26) on 64-bit ARM and targets API 36. After installing, open **Settings → Load GGUF model from device** and pick a model you already have. Model size and generation speed depend on the device.
 
-### v0.1.5-alpha changes
+### v0.1.6-alpha changes
 
 - Chat stays locked until an emergency stop has returned, so another request cannot queue behind it.
 - Starting a new conversation asks before clearing chat history and displays reset errors.
 - Memory deletion displays failures; memory saving and model import wait for engine initialization.
 - Refreshed launcher icon across adaptive, round, density and store assets.
+- Shares llama.cpp's process-wide backend across model reloads, budgets replies to the context left after the prompt, and serializes context generation per model.
 
 ## Build from source
 

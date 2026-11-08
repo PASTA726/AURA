@@ -6,7 +6,7 @@
 
 use std::num::NonZeroU32;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use async_trait::async_trait;
 
@@ -32,6 +32,26 @@ const MAX_PROMPT_CHARS: usize = 24_000;
 /// keeps the agent's tool-protocol behaviour reproducible.
 const SAMPLER_SEED: u32 = 0x5A17_0001;
 
+/// llama.cpp keeps backend initialization in process-global state and only
+/// permits one live `LlamaBackend`. Keep it alive for the process and share it
+/// across model reloads instead of trying to initialize it for every import.
+static SHARED_BACKEND: OnceLock<Result<Arc<LlamaCppBackend>, String>> = OnceLock::new();
+
+fn shared_backend() -> Result<Arc<LlamaCppBackend>, AuraError> {
+    SHARED_BACKEND
+        .get_or_init(|| {
+            send_logs_to_tracing(llama_cpp_2::LogOptions::default());
+            LlamaCppBackend::init()
+                .map(Arc::new)
+                .map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map(Arc::clone)
+        .map_err(|error| {
+            AuraError::InferenceError(format!("llama.cpp backend init failed: {error}"))
+        })
+}
+
 /// llama.cpp requires one initialized backend instance for the process; it
 /// must outlive every context. The loaded model pins a clone of the Arc so
 /// an unload during an active generation cannot invalidate the backend.
@@ -44,18 +64,17 @@ pub struct GgufBackend {
 struct LoadedModel {
     model: LlamaModel,
     info: ModelInfo,
+    /// llama-cpp-2 documents concurrent context creation for one model as
+    /// unsound. Serialize generation per loaded model, which also prevents
+    /// two large KV caches from exhausting mobile memory at once.
+    generation_lock: Mutex<()>,
 }
 
 impl GgufBackend {
     /// Create a new engine with no model loaded yet.
     pub fn new() -> Result<Self, AuraError> {
-        // Route llama.cpp logs into tracing instead of raw stderr.
-        send_logs_to_tracing(llama_cpp_2::LogOptions::default());
-        let backend = LlamaCppBackend::init().map(Arc::new).map_err(|e| {
-            AuraError::InferenceError(format!("llama.cpp backend init failed: {e}"))
-        })?;
         Ok(Self {
-            backend,
+            backend: shared_backend()?,
             model: Mutex::new(None),
         })
     }
@@ -99,6 +118,11 @@ impl InferenceBackend for GgufBackend {
             .map_err(|e| AuraError::InferenceError(format!("failed to load model: {e}")))?;
 
             let ctx_len = model.n_ctx_train().min(MAX_CONTEXT);
+            if ctx_len == 0 {
+                return Err(AuraError::InferenceError(
+                    "model reports an invalid zero-token context".to_string(),
+                ));
+            }
 
             // Probe one context now to surface memory/context errors at load
             // time instead of at first question time.
@@ -129,6 +153,7 @@ impl InferenceBackend for GgufBackend {
                 Arc::new(LoadedModel {
                     model,
                     info: info.clone(),
+                    generation_lock: Mutex::new(()),
                 }),
                 info,
             ))
@@ -209,25 +234,54 @@ fn generate_sync(
     config: &InferenceConfig,
     cancel: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String, AuraError> {
+    let _generation_guard = loaded.generation_lock.lock().map_err(|_| {
+        AuraError::InferenceError("model generation lock was poisoned".to_string())
+    })?;
+
     // Bail out before paying for prefill if a stop was already requested.
     if is_cancelled(cancel) {
         return Err(AuraError::InferenceError(
             "generation cancelled (emergency stop)".to_string(),
         ));
     }
-    let LoadedModel { model, info } = loaded;
+    let LoadedModel { model, info, .. } = loaded;
     let rendered = render_prompt(model, prompt)?;
 
     let tokens = model.vocab().tokenize(rendered.as_bytes(), true, true);
 
     let n_ctx = info.context_length;
-    let budget = u32::from(config.max_tokens).min(n_ctx);
-    if tokens.len() as u32 > n_ctx - budget {
+    let prompt_tokens = u32::try_from(tokens.len()).map_err(|_| {
+        AuraError::InferenceError("tokenized prompt is too large".to_string())
+    })?;
+    if prompt_tokens == 0 {
+        return Err(AuraError::InferenceError(
+            "llama.cpp produced an empty tokenized prompt".to_string(),
+        ));
+    }
+    if config.max_tokens == 0 {
+        return Err(AuraError::InferenceError(
+            "generation token limit must be greater than zero".to_string(),
+        ));
+    }
+    if n_ctx == 0 {
+        return Err(AuraError::InferenceError(
+            "model reports an invalid zero-token context".to_string(),
+        ));
+    }
+    if prompt_tokens >= n_ctx {
         return Err(AuraError::InferenceError(format!(
-            "prompt too long: {} tokens + {} generation budget exceeds context {}",
-            tokens.len(),
-            budget,
-            n_ctx
+            "prompt too long: {prompt_tokens} tokens leave no room for a reply in context {n_ctx}"
+        )));
+    }
+
+    // Treat max_tokens as a ceiling, not a context reservation. Small-context
+    // models (for example 2K models) otherwise fail every request because the
+    // default 2K generation budget consumes the entire context before the
+    // prompt is considered.
+    let budget = u32::from(config.max_tokens).min(n_ctx - prompt_tokens);
+    if budget == 0 {
+        return Err(AuraError::InferenceError(format!(
+            "prompt too long: {prompt_tokens} tokens leave no generation budget in context {n_ctx}"
         )));
     }
 
