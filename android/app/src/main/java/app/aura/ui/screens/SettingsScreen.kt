@@ -13,7 +13,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import app.aura.ui.EngineState
@@ -90,13 +89,6 @@ fun SettingsScreen() {
                         icon = Icons.Filled.DarkMode,
                         checked = isDark,
                         onCheckedChange = { EngineState.setDarkTheme(context, it) }
-                    )
-                    HorizontalDivider(color = palette.surfaceVariant, modifier = Modifier.padding(horizontal = 16.dp))
-                    SettingsItem(
-                        title = "Language",
-                        subtitle = "English",
-                        icon = Icons.Filled.Language,
-                        onClick = { }
                     )
                 }
             }
@@ -207,7 +199,10 @@ fun SettingsScreen() {
                         Slider(
                             value = maxIterations.toFloat(),
                             onValueChange = { v ->
-                                EngineState.setMaxIterationsStored(context, v.toInt().coerceIn(1, 64))
+                                EngineState.setMaxIterationsPreview(v.toInt().coerceIn(1, 64))
+                            },
+                            onValueChangeFinished = {
+                                EngineState.setMaxIterationsCommit(context, maxIterations)
                             },
                             valueRange = 1f..64f,
                             steps = 62,
@@ -236,8 +231,9 @@ fun SettingsScreen() {
                             color = palette.onBackground
                         )
                         Text(
-                            "Rust core + llama.cpp GGUF inference on-device. All data stays " +
-                                "in this app's private storage; no network access is used by the agent.",
+                            "v${app.aura.BuildConfig.VERSION_NAME} • Rust core + llama.cpp " +
+                                "GGUF inference on-device. All data stays in this app's private " +
+                                "storage; no network access is used by the agent.",
                             style = MaterialTheme.typography.bodySmall,
                             color = palette.onSurfaceMuted,
                             modifier = Modifier.padding(top = 6.dp)
@@ -296,35 +292,6 @@ private fun SettingsToggleItem(
                 checkedThumbColor = AuraCyan,
                 checkedTrackColor = AuraCyan.copy(alpha = 0.5f)
             )
-        )
-    }
-}
-
-@Composable
-private fun SettingsItem(
-    title: String,
-    subtitle: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    onClick: () -> Unit
-) {
-    val palette = LocalAuraPalette.current
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.Transparent)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, contentDescription = null, tint = palette.onSurface, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.width(14.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, color = palette.onBackground)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = palette.onSurfaceMuted)
-        }
-        Icon(
-            Icons.Filled.ChevronRight,
-            contentDescription = null,
-            tint = palette.onSurfaceMuted
         )
     }
 }

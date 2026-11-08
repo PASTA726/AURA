@@ -157,7 +157,12 @@ impl InferenceBackend for GgufBackend {
         self.slot().is_some()
     }
 
-    async fn generate(&self, prompt: &str, config: &InferenceConfig) -> Result<String, AuraError> {
+    async fn generate(
+        &self,
+        prompt: &str,
+        config: &InferenceConfig,
+        cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<String, AuraError> {
         let loaded = Arc::clone(self.slot().as_ref().ok_or_else(|| {
             AuraError::InferenceError("no model loaded — load a GGUF model first".to_string())
         })?);
@@ -165,9 +170,11 @@ impl InferenceBackend for GgufBackend {
         let prompt: String = prompt.chars().take(MAX_PROMPT_CHARS).collect();
         let config = config.clone();
 
-        tokio::task::spawn_blocking(move || generate_sync(&loaded, &backend, &prompt, &config))
-            .await
-            .map_err(|e| AuraError::InferenceError(format!("generation task panicked: {e}")))?
+        tokio::task::spawn_blocking(move || {
+            generate_sync(&loaded, &backend, &prompt, &config, cancel.as_ref())
+        })
+        .await
+        .map_err(|e| AuraError::InferenceError(format!("generation task panicked: {e}")))?
     }
 }
 
@@ -186,14 +193,28 @@ fn thread_count() -> i32 {
         .unwrap_or(2)
 }
 
-/// One full blocking generation: chat-template → tokenize → prefill → sample
-/// loop (up to `max_tokens`) → detokenize.
+/// Emergency-stop check for the generation loop (cheap atomic read per token).
+fn is_cancelled(cancel: Option<&Arc<std::sync::atomic::AtomicBool>>) -> bool {
+    cancel
+        .map(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
+        .unwrap_or(false)
+}
+
+/// One full blocking generation: chat-template → tokenize → chunked prefill →
+/// sample loop (up to `max_tokens`) with per-token cancel checks → detokenize.
 fn generate_sync(
     loaded: &LoadedModel,
     backend: &LlamaCppBackend,
     prompt: &str,
     config: &InferenceConfig,
+    cancel: Option<&Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<String, AuraError> {
+    // Bail out before paying for prefill if a stop was already requested.
+    if is_cancelled(cancel) {
+        return Err(AuraError::InferenceError(
+            "generation cancelled (emergency stop)".to_string(),
+        ));
+    }
     let LoadedModel { model, info } = loaded;
     let rendered = render_prompt(model, prompt)?;
 
@@ -214,16 +235,28 @@ fn generate_sync(
         .new_context(backend, context_params(n_ctx))
         .map_err(|e| AuraError::InferenceError(format!("context creation failed: {e}")))?;
 
-    // Prefill: logits are produced only for the final prompt token.
-    let mut batch = LlamaBatch::new(512, 1);
+    // Prefill in chunks: LlamaBatch has a fixed capacity and a >capacity batch
+    // fails with InsufficientSpace, so long prompts (agent instructions +
+    // history overflow the 512 default easily). Logits are produced only for
+    // the very last token of the last chunk.
+    const PREFILL_CHUNK: usize = 512;
+    let mut batch = LlamaBatch::new(PREFILL_CHUNK, 1);
     let last = (tokens.len() - 1) as i32;
-    for (pos, token) in (0_i32..).zip(tokens.iter()) {
-        batch
-            .add(*token, pos, &[0], pos == last)
-            .map_err(|e| AuraError::InferenceError(format!("batch add failed: {e}")))?;
+    let mut position: i32 = 0;
+    while position <= last {
+        batch.clear();
+        let chunk_end = ((position as usize) + PREFILL_CHUNK).min(tokens.len());
+        let chunk = &tokens[position as usize..chunk_end];
+        for (i, token) in chunk.iter().enumerate() {
+            let is_final = (position as usize) + i == tokens.len() - 1;
+            batch
+                .add(*token, position + i as i32, &[0], is_final)
+                .map_err(|e| AuraError::InferenceError(format!("batch add failed: {e}")))?;
+        }
+        ctx.decode(&mut batch)
+            .map_err(|e| AuraError::InferenceError(format!("prompt decode failed: {e}")))?;
+        position = chunk_end as i32;
     }
-    ctx.decode(&mut batch)
-        .map_err(|e| AuraError::InferenceError(format!("prompt decode failed: {e}")))?;
 
     let mut sampler = if config.temperature <= f32::EPSILON {
         LlamaSampler::chain_simple([LlamaSampler::greedy()])
@@ -240,6 +273,11 @@ fn generate_sync(
     let mut next_position = last;
 
     loop {
+        if is_cancelled(cancel) {
+            return Err(AuraError::InferenceError(
+                "generation cancelled (emergency stop)".to_string(),
+            ));
+        }
         let token = sampler.sample(&ctx, batch.n_tokens() - 1);
         sampler.accept(token);
 
@@ -328,7 +366,7 @@ mod tests {
             stop_sequences: vec![],
         };
         let answer = backend
-            .generate("Say 'hello world' and nothing else.", &config)
+            .generate("Say 'hello world' and nothing else.", &config, None)
             .await
             .expect("generation should work");
         assert!(
@@ -360,6 +398,7 @@ mod tests {
             .generate(
                 "Respond with exactly one JSON object and nothing else using this protocol: {\"action\":\"respond\",\"text\":\"<your answer>\"} — put the word ok in the text field.",
                 &config,
+                None,
             )
             .await
             .expect("generation");

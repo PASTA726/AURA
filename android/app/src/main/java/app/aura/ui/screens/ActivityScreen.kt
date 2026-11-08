@@ -13,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.aura.core.AuraEngine
+import app.aura.ui.EngineState
 import app.aura.ui.theme.*
 import app.aura.ui.theme.LocalAuraPalette
 import kotlinx.coroutines.Dispatchers
@@ -57,6 +58,7 @@ fun ActivityScreen() {
 
     fun reload() {
         coroutineScope.launch {
+            EngineState.awaitEngine()
             loading = true
             val json = withContext(Dispatchers.IO) { AuraEngine.getAuditJson(100) }
             val arr = runCatching { JSONArray(json) }.getOrDefault(JSONArray())

@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import app.aura.core.AuraEngine
+import app.aura.ui.EngineState
 import app.aura.ui.theme.*
 import app.aura.ui.theme.LocalAuraPalette
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +35,8 @@ data class ChatMessage(
     val isUser: Boolean,
     val timestamp: String = "",
     val isError: Boolean = false,
+    /** Internal tool/system traffic — rendered as a compact detail chip. */
+    val isSystemChip: Boolean = false,
 )
 
 private val timeFormatter = DateTimeFormatter.ofPattern("HH:mm")
@@ -56,19 +59,22 @@ fun ChatScreen() {
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
 
-    // Load the REAL persisted conversation from the engine.
+    // Load the REAL persisted conversation from the engine (after engine ready).
     LaunchedEffect(Unit) {
+        EngineState.awaitEngine()
         val history = withContext(Dispatchers.IO) { JSONObject(AuraEngine.getHistoryJson()) }
         val stored = history.optJSONArray("messages") ?: JSONArray()
         for (i in 0 until stored.length()) {
             val m = stored.optJSONObject(i) ?: continue
+            val role = m.optString("role")
             messages.add(
                 ChatMessage(
                     id = nextId++,
                     content = m.optString("content"),
-                    isUser = m.optString("role") == "user",
+                    isUser = role == "user",
                     timestamp = displayTimestamp(m.optString("timestamp")),
-                    isError = m.optString("role") == "error"
+                    isError = role == "error",
+                    isSystemChip = role == "tool" || role == "system"
                 )
             )
         }
@@ -110,12 +116,27 @@ fun ChatScreen() {
                     onClick = {
                         coroutineScope.launch {
                             isAgentTyping = true
-                            withContext(Dispatchers.IO) { AuraEngine.newConversation() }
-                            messages.clear()
+                            val result = withContext(Dispatchers.IO) {
+                                JSONObject(AuraEngine.newConversation())
+                            }
+                            if (result.optBoolean("ok", false)) {
+                                messages.clear()
+                            } else {
+                                // Engine refused the wipe — surface it honestly.
+                                messages.add(
+                                    ChatMessage(
+                                        id = nextId++,
+                                        content = "New conversation failed: " +
+                                            result.optString("error", "unknown"),
+                                        isUser = false,
+                                        isError = true
+                                    )
+                                )
+                            }
                             isAgentTyping = false
                         }
                     },
-                    enabled = !loadingHistory
+                    enabled = !loadingHistory && !isAgentTyping
                 ) {
                     Icon(
                         Icons.Filled.AddComment,
@@ -176,7 +197,9 @@ fun ChatScreen() {
             ) {
                 OutlinedButton(
                     onClick = {
-                        AuraEngine.emergencyStop()
+                        coroutineScope.launch {
+                            withContext(Dispatchers.IO) { AuraEngine.emergencyStop() }
+                        }
                         isAgentTyping = false
                     },
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = AuraError),
@@ -251,6 +274,7 @@ fun ChatScreen() {
                             isAgentTyping = true
                             coroutineScope.launch {
                                 val response = withContext(Dispatchers.IO) {
+                                    EngineState.awaitEngine()
                                     AuraEngine.processMessage(text)
                                 }
                                 val isEngineError = response.startsWith("Error:")
@@ -287,6 +311,32 @@ fun ChatScreen() {
 @Composable
 private fun ChatBubble(message: ChatMessage) {
     val palette = LocalAuraPalette.current
+    // Internal tool/system rows: compact neutral chip, never an assistant bubble.
+    if (message.isSystemChip) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start
+        ) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = palette.surfaceVariant.copy(alpha = 0.6f),
+                border = androidx.compose.foundation.BorderStroke(
+                    0.5.dp,
+                    palette.onSurfaceMuted.copy(alpha = 0.3f)
+                )
+            ) {
+                Text(
+                    text = message.content,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.onSurfaceMuted,
+                    maxLines = 4,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+        return
+    }
     val isUser = message.isUser
     Row(
         modifier = Modifier.fillMaxWidth(),

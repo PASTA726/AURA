@@ -120,6 +120,7 @@ impl aura_inference::InferenceBackend for ScriptedBackend {
         &self,
         prompt: &str,
         _config: &aura_core::InferenceConfig,
+        _cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<String, aura_core::AuraError> {
         assert!(
             prompt.contains("AVAILABLE TOOLS"),

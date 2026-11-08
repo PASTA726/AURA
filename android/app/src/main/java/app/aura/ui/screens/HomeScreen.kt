@@ -12,19 +12,25 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import app.aura.core.AuraEngine
 import app.aura.ui.EngineState
 import app.aura.ui.theme.*
 import app.aura.ui.theme.LocalAuraPalette
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun HomeScreen(onNavigate: (route: String) -> Unit = {}) {
     val palette = LocalAuraPalette.current
+    val coroutineScope = rememberCoroutineScope()
 
     val engineReady by EngineState.engineReady.collectAsState()
     val agentStatus by EngineState.agentStatus.collectAsState()
@@ -33,7 +39,10 @@ fun HomeScreen(onNavigate: (route: String) -> Unit = {}) {
     val conversationCount by EngineState.conversationCount.collectAsState()
 
     // Fresh snapshot every time the Home screen is (re)shown.
-    LaunchedEffect(Unit) { EngineState.refreshStatus() }
+    LaunchedEffect(Unit) {
+        EngineState.awaitEngine()
+        EngineState.refreshStatus()
+    }
 
     LazyColumn(
         modifier = Modifier
@@ -138,7 +147,7 @@ fun HomeScreen(onNavigate: (route: String) -> Unit = {}) {
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                             ) {
                                 Text(
-                                    text = if (modelLoaded) "GGUF • on-device" else "placeholder",
+                                    text = if (modelLoaded) "GGUF • on-device" else "No model yet — load one in Settings",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = if (modelLoaded) AuraSuccess else palette.onSurfaceMuted
                                 )
@@ -207,7 +216,14 @@ fun HomeScreen(onNavigate: (route: String) -> Unit = {}) {
                         icon = Icons.Filled.Delete,
                         label = "Start a new conversation",
                         onClick = {
-                            onNavigate("chat")
+                            // B12: actually reset the agent BEFORE navigating,
+                            // so the opened Chat really starts from scratch.
+                            coroutineScope.launch {
+                                EngineState.awaitEngine()
+                                withContext(Dispatchers.IO) { AuraEngine.newConversation() }
+                                EngineState.refreshStatus()
+                                onNavigate("chat")
+                            }
                         },
                         modifier = Modifier.fillMaxWidth()
                     )

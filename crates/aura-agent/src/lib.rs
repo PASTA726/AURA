@@ -278,7 +278,11 @@ impl AgentLoop {
         deps: &AgentDeps<'_>,
     ) -> Result<String, AuraError> {
         if self.context.emergency_stop.load(Ordering::SeqCst) {
-            return Err(AuraError::AgentError("Agent is stopped".to_string()));
+            return Err(AuraError::AgentError(
+                "Agent is stopped after an emergency stop. Start a new conversation \
+(New Conversation button) to reset the agent."
+                    .to_string(),
+            ));
         }
 
         // Cache tool schemas for this request (subscription to enabling changes).
@@ -337,7 +341,11 @@ impl AgentLoop {
             let prompt = self.build_prompt();
             let raw = deps
                 .inference
-                .generate(&prompt, &self.inference_config)
+                .generate(
+                    &prompt,
+                    &self.inference_config,
+                    Some(Arc::clone(&self.context.emergency_stop)),
+                )
                 .await?;
 
             // Safe checkpoint: the user may have pressed emergency stop while
@@ -423,7 +431,7 @@ impl AgentLoop {
                         ))),
                         _ => deps
                             .tools
-                            .execute(&tool, args, self.config.tool_timeout_secs)
+                        .execute(&tool, args, self.config.tool_timeout_secs)
                             .await,
                     };
 
@@ -445,7 +453,22 @@ impl AgentLoop {
 
                     let observation_text =
                         format!("{{\"tool\":\"{}\",\"result\":{}}}", tool, observation);
+                    // Build the audit detail BEFORE `observation_text` moves
+                    // into the stored message.
+                    let audit_detail = {
+                        let head = observation_text.chars().take(160).collect::<String>();
+                        format!("\"{tool}\" → {head}")
+                    };
                     let obs_msg = Message::new(MessageRole::Tool, observation_text);
+                    // Audit trail so the Activity screen shows real tool actions.
+                    if let Some(memory) = deps.memory {
+                        let event = if succeeded {
+                            "tool_executed"
+                        } else {
+                            "tool_failed"
+                        };
+                        let _ = memory.log_audit(event, &audit_detail);
+                    }
                     if let Some(memory) = deps.memory {
                         memory
                             .save_message(self.context.conversation_id, &obs_msg)
@@ -555,6 +578,7 @@ mod tests {
             &self,
             prompt: &str,
             _config: &aura_core::InferenceConfig,
+            _cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
         ) -> Result<String, AuraError> {
             self.prompts_seen
                 .lock()

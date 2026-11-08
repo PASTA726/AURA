@@ -288,3 +288,60 @@ Phase 3 `loadGguf` path reachable from no screen.
 - Device test session (logcat crash triage if any).
 - Token streaming UI (Phase 3 leftover).
 - Auto-refresh statuses on screen navigation instead of init-only.
+
+---
+
+## 10. Session Log — 2026-11-08 — QA fix round (v0.1.4-alpha)
+
+**Input**: independent QA audit (DeepSeek subagent, role-played a real user) on
+v0.1.3-alpha produced findings B1–B25. Handled in this round: B1, B2, B3, B4,
+B5, B6, B8, B9, B12, B13, B14, B15, B16, B22, B23 (B7, B10, B11, B17, B24, B25
+deferred).
+
+### 10.1 Native (Rust)
+- **B2** `InferenceBackend::generate` gained `cancel: Option<Arc<AtomicBool>>`;
+  the agent loop passes its `emergency_stop` flag; `generate_sync` bails
+  pre-prefill and checks **per token** in the sample loop (`is_cancelled`).
+  Stopped-agent message now explains recovery (new conversation).
+- **B3** chunked prefill (`PREFILL_CHUNK=512`): batches cleared and decoded in
+  slices, logits only on the very last token of the last chunk. Fixes the
+  `LlamaBatch(512)` InsufficientSpace crash on long agent prompts. Host GGUF
+  smoke tests (incl. the long protocol prompt) pass 2/2.
+- **B8** tool executions are audit-logged (`tool_executed` / `tool_failed`,
+  160-char detail head) right after execution, fixing the empty Activity feed.
+- **B22** placeholder backend answer now honestly says no GGUF model is loaded
+  and nothing is downloaded automatically.
+- clippy clean (`clamp` instead of `max/min`), fmt clean, 22/22 tests.
+
+### 10.2 Android (Kotlin)
+- **B1** `AuraEngine.emergencyStop()` is NOT `@Synchronized` anymore (it would
+  queue behind `processMessage`'s monitor for the whole generation → ANR);
+  the badge click runs on the IO dispatcher.
+- **B4** `tool`/`system` history rows render as compact neutral chips, not
+  assistant bubbles.
+- **B5** startup auto-reload: `filesDir/models/*.gguf` (newest) is reloaded
+  silently; a corrupt file is deleted instead of failing on every launch.
+- **B6** init race fixed: `EngineState.awaitEngine()` (`CompletableDeferred`)
+  gates every screen; `AuraEngine` fallback paths no longer create a
+  non-persistent engine that would block persistent init.
+- **B9** iteration slider commits via `onValueChangeFinished` (prefs + engine,
+  IO); `refreshStatus` no longer clobbers the value mid-drag.
+- **B12** Home "Start a new conversation" really resets the agent first.
+- **B13** new-conversation button: result `ok` checked; disabled during
+  generation; failures surfaced in the transcript.
+- **B14** manifest: `INTERNET`/`FOREGROUND_SERVICE`/`READ_EXTERNAL_STORAGE`/
+  `READ_MEDIA_IMAGES` removed; `allowBackup=false`.
+- **B15** `versionCode 5`, `versionName 0.1.4`, buildConfig enabled, About
+  shows the version.
+- **B16** wipe-memories confirmation dialog.
+- **B23** dead "Language" row removed; Home badge says "No model yet — load one
+  in Settings"; Memory filter chips reduced to All + Long-term.
+
+### 10.3 Verification & release
+- `cargo test --all` 22/22 · clippy 0 · fmt clean · GGUF host tests 2/2
+  (chunked prefill, real SmolLM2-135M).
+- ARM64 `.so` rebuilt (NDK r27c, API 26, `armv8.2-a+dotprod`), APK
+  assembleDebug BUILD SUCCESSFUL.
+- Released as v0.1.4-alpha (asset `AURA-v0.1.4-alpha-arm64.apk`), pre-release.
+- Deferred, honestly untested on device: SAF picker flow runtime behaviour,
+  chat restore, theme switching, per-token cancel latency on hardware.

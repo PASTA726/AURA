@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.aura.core.AuraEngine
+import app.aura.ui.EngineState
 import app.aura.ui.theme.*
 import app.aura.ui.theme.LocalAuraPalette
 import kotlinx.coroutines.Dispatchers
@@ -26,10 +27,7 @@ import java.time.format.DateTimeFormatter
 
 private enum class MemoryCategory(val label: String, val native: String) {
     All("All", ""),
-    Preferences("Preferences", "preference"),
-    LongTerm("Long-term", "long_term"),
-    Conversations("Conversations", "conversation"),
-    Tasks("Tasks", "task_history")
+    LongTerm("Long-term", "long_term")
 }
 
 private data class MemoryItem(
@@ -58,10 +56,12 @@ fun MemoryScreen() {
     var addDialogOpen by remember { mutableStateOf(false) }
     var newMemoryText by remember { mutableStateOf("") }
     var addError by remember { mutableStateOf<String?>(null) }
+    var wipeConfirmOpen by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
     fun reload() {
         coroutineScope.launch {
+            EngineState.awaitEngine()
             loading = true
             val json = withContext(Dispatchers.IO) { AuraEngine.getMemoriesJson(200) }
             val arr = runCatching { JSONArray(json) }.getOrDefault(JSONArray())
@@ -104,10 +104,7 @@ fun MemoryScreen() {
             },
             actions = {
                 IconButton(
-                    onClick = { coroutineScope.launch {
-                        withContext(Dispatchers.IO) { AuraEngine.wipeMemories() }
-                        reload()
-                    } },
+                    onClick = { wipeConfirmOpen = true },
                     enabled = allMemories.isNotEmpty()
                 ) {
                     Icon(
@@ -293,6 +290,33 @@ fun MemoryScreen() {
             },
             dismissButton = {
                 TextButton(onClick = { addDialogOpen = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (wipeConfirmOpen) {
+        AlertDialog(
+            onDismissRequest = { wipeConfirmOpen = false },
+            title = { Text("Delete all memories?") },
+            text = {
+                Text(
+                    "This permanently deletes every stored long-term memory. " +
+                        "This cannot be undone."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        wipeConfirmOpen = false
+                        coroutineScope.launch {
+                            withContext(Dispatchers.IO) { AuraEngine.wipeMemories() }
+                            reload()
+                        }
+                    }
+                ) { Text("Delete all", color = AuraError) }
+            },
+            dismissButton = {
+                TextButton(onClick = { wipeConfirmOpen = false }) { Text("Cancel") }
             }
         )
     }

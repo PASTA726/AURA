@@ -19,6 +19,14 @@ import org.json.JSONObject
 object EngineState {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** Gate every screen waits on: engine init (incl. model auto-reload) done. */
+    private val engineInitialized = kotlinx.coroutines.CompletableDeferred<Unit>()
+
+    /** Suspends until the persisted engine is ready. Call before engine I/O. */
+    suspend fun awaitEngine() {
+        engineInitialized.await()
+    }
+
     private val _engineReady = MutableStateFlow(false)
     val engineReady: StateFlow<Boolean> = _engineReady
 
@@ -60,6 +68,23 @@ object EngineState {
             .edit().putInt("maxIterations", n).apply()
     }
 
+    /** Slider is being dragged: update the UI value only (B9 guard). */
+    fun setMaxIterationsPreview(n: Int) {
+        _maxIterationsBeingEdited = true
+        _maxIterations.value = n
+    }
+
+    /** Slider released: commit to prefs AND push to the engine (B9). */
+    fun setMaxIterationsCommit(context: Context, n: Int) {
+        _maxIterationsBeingEdited = false
+        _maxIterations.value = n
+        context.getSharedPreferences("aura-ui", Context.MODE_PRIVATE)
+            .edit().putInt("maxIterations", n).apply()
+        scope.launch(Dispatchers.IO) {
+            AuraEngine.setMaxIterations(n)
+        }
+    }
+
     /** Pull a fresh status snapshot from the engine (blocking). */
     suspend fun refreshStatus() = withContext(Dispatchers.IO) {
         try {
@@ -67,20 +92,55 @@ object EngineState {
             _agentStatus.value = status.optString("agentStatus", "idle")
             _modelLoaded.value = status.optBoolean("modelLoaded", false)
             _conversationCount.value = status.optLong("conversationCount", 0)
-            _maxIterations.value = status.optInt("maxIterations", 20)
+            // Don't clobber a value the user is actively dragging in Settings;
+            // the engine and prefs only diverge transiently.
+            if (!_maxIterationsBeingEdited) {
+                _maxIterations.value = status.optInt("maxIterations", 20)
+            }
             _engineReady.value = !status.has("error")
         } catch (_: Throwable) {
             _engineReady.value = false
         }
     }
 
-    /** Initialize the persisted engine and sync the status snapshot. */
+    @Volatile
+    private var _maxIterationsBeingEdited = false
+
+    /**
+     * Initialize the persisted engine and sync the status snapshot. If a GGUF
+     * model was loaded in a previous session, it is re-loaded now (B5): the
+     * process restart loses the llama.cpp state, but the file persists under
+     * filesDir/models.
+     */
     fun initializeAsync(context: Context) {
         loadPreferences(context)
         scope.launch {
-            AuraEngine.initialize(context.filesDir.absolutePath)
-            AuraEngine.setMaxIterations(_maxIterations.value)
+            val ready = AuraEngine.initialize(context.filesDir.absolutePath)
+            if (ready) {
+                AuraEngine.setMaxIterations(_maxIterations.value)
+                autoReloadModel(context)
+            }
             refreshStatus()
+            engineInitialized.complete(Unit)
+        }
+    }
+
+    /// Reload the persisted model file after a process restart (best effort).
+    private suspend fun autoReloadModel(context: Context) = withContext(Dispatchers.IO) {
+        try {
+            val modelsDir = java.io.File(context.filesDir, "models")
+            val existing = modelsDir.listFiles { f -> f.name.endsWith(".gguf", ignoreCase = true) }
+                ?.maxByOrNull { it.lastModified() } ?: return@withContext
+            val result = JSONObject(AuraEngine.loadGguf(existing.absolutePath))
+            if (result.optBoolean("ok", false)) {
+                _modelInfo.value = result
+                _modelLoaded.value = true
+            } else {
+                // Corrupted or incompatible file: drop it so the user isn't
+                // stuck failing to load the same broken model every launch.
+                existing.delete()
+            }
+        } catch (_: Throwable) {
         }
     }
 

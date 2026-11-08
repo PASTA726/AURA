@@ -97,11 +97,30 @@ The resulting APK is generated at:
 
 ---
 
-## 6. Alpha Status (v0.1.3)
+## 6. Alpha Status (v0.1.4)
 
 Implemented and verified (22/22 cargo tests + 2/2 GGUF smoke tests, zero clippy warnings):
 
-- **Real GUI, no scripted demo data** — new in v0.1.3: every screen is wired to the
+- **QA fix round** — new in v0.1.4, from an independent code-review audit:
+  - Emergency stop no longer queues behind a synchronized long generation
+    (ANR fix): the stop button flips a cancel flag the inference backend polls
+    **per token**, mid-generation, and a stopped agent tells the user exactly
+    how to recover (start a new conversation).
+  - Chunked prefill (512-token batches): long agent prompts no longer overflow
+    llama.cpp's fixed `LlamaBatch` capacity (the crash behind "first long
+    message fails"). Verified against a real model on host.
+  - Tool observations render as compact neutral chips in the transcript, and
+    every tool execution is visible in the Activity audit log.
+  - The GGUF model is **re-loaded automatically on app start** (persisted under
+    private storage) — no manual re-pick after every process restart.
+  - Engine init is race-free: all screens gate on the persistent engine being
+    ready; the initialization path can no longer create a non-persistent engine.
+  - Settings actually drive the engine: the iteration slider commits on
+    release and survives status refreshes; honest UI (no dead options), no
+    unnecessary Android permissions (`INTERNET` removed — the agent cannot
+    access the network, `allowBackup=false` so SQLite data stays on-device).
+
+- **Real GUI, no scripted demo data** — v0.1.3: every screen is wired to the
   engine. Chat shows the persisted SQLite conversation (and truly resets it), the
   Memory screen reads/writes real long-term memories, Activity renders the real
   audit log (tool executions / permission changes / model loads), Settings' theme

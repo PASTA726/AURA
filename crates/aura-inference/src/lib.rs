@@ -1,5 +1,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use aura_core::{AuraError, InferenceConfig};
 
@@ -33,7 +35,15 @@ pub trait InferenceBackend: Send + Sync {
     async fn load_model(&mut self, path: &str) -> Result<ModelInfo, AuraError>;
     async fn unload_model(&mut self) -> Result<(), AuraError>;
     fn is_loaded(&self) -> bool;
-    async fn generate(&self, prompt: &str, config: &InferenceConfig) -> Result<String, AuraError>;
+    /// Cancel check is polled by backends mid-generation: `Some(token)` lets a
+    /// long generation be aborted after the current token instead of blocking
+    /// the UI thread until completion.
+    async fn generate(
+        &self,
+        prompt: &str,
+        config: &InferenceConfig,
+        cancel: Option<Arc<AtomicBool>>,
+    ) -> Result<String, AuraError>;
 }
 
 // ─── Placeholder backend ──────────────────────────────────────────────────
@@ -85,9 +95,11 @@ impl InferenceBackend for PlaceholderBackend {
         &self,
         _prompt: &str,
         _config: &InferenceConfig,
+        _cancel: Option<Arc<AtomicBool>>,
     ) -> Result<String, AuraError> {
         Ok(
-            "(Inference backend not yet connected — llama.cpp integration pending Phase 3)"
+            "(No GGUF model loaded — pick a model file in AURA Settings; nothing is \
+downloaded automatically)"
                 .to_string(),
         )
     }
@@ -140,8 +152,9 @@ impl InferenceManager {
         &self,
         prompt: &str,
         config: &InferenceConfig,
+        cancel: Option<Arc<AtomicBool>>,
     ) -> Result<String, AuraError> {
-        self.backend.generate(prompt, config).await
+        self.backend.generate(prompt, config, cancel).await
     }
 
     pub fn is_loaded(&self) -> bool {

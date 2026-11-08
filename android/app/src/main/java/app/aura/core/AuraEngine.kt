@@ -37,9 +37,11 @@ object AuraEngine {
     @Synchronized
     fun processMessage(input: String): String {
         if (nativeHandle == 0L) {
-            if (!initialize()) {
-                return "Error: AuraEngine is not initialized"
-            }
+            // Never create a non-persistent engine as a fallback: it would race
+            // the real persistent init in EngineState.initializeAsync and then
+            // block it (initialize() no-ops once a handle exists). Screens gate
+            // on EngineState.awaitEngine() instead.
+            return "Error: AuraEngine is still starting — try again in a second"
         }
         return try {
             nativeProcessMessage(nativeHandle, input)
@@ -48,10 +50,20 @@ object AuraEngine {
         }
     }
 
-    @Synchronized
+    /**
+     * Emergency stop: flips the cancel flag the backend polls per token.
+     * NOT @Synchronized on purpose — [processMessage] holds the object monitor
+     * for the whole (potentially minutes-long) generation, and a synchronized
+     * stop would queue behind it and freeze the UI thread (ANR).
+     * Safe to call from any thread: reads a volatile handle and does an atomic
+     * store inside the native code.
+     */
     fun emergencyStop() {
         if (nativeHandle != 0L) {
-            nativeEmergencyStop(nativeHandle)
+            try {
+                nativeEmergencyStop(nativeHandle)
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -63,7 +75,7 @@ object AuraEngine {
      */
     @Synchronized
     fun loadGguf(path: String): String {
-        if (nativeHandle == 0L && !initialize(null)) {
+        if (nativeHandle == 0L) {
             return """{"ok":false,"error":"engine not initialized"}"""
         }
         return try {
@@ -80,7 +92,7 @@ object AuraEngine {
      */
     @Synchronized
     fun getHistoryJson(): String {
-        if (nativeHandle == 0L && !initialize(null)) {
+        if (nativeHandle == 0L) {
             return """{"conversationCount":0,"messages":[],"error":"engine not initialized"}"""
         }
         return try {
@@ -97,7 +109,7 @@ object AuraEngine {
      */
     @Synchronized
     fun newConversation(): String {
-        if (nativeHandle == 0L && !initialize(null)) {
+        if (nativeHandle == 0L) {
             return """{"ok":false,"error":"engine not initialized"}"""
         }
         return try {
@@ -113,7 +125,7 @@ object AuraEngine {
      */
     @Synchronized
     fun getStatusJson(): String {
-        if (nativeHandle == 0L && !initialize(null)) {
+        if (nativeHandle == 0L) {
             return """{"agentStatus":"paused","modelLoaded":false,"maxIterations":20,"conversationCount":0,"error":"engine not initialized"}"""
         }
         return try {
@@ -129,7 +141,7 @@ object AuraEngine {
      */
     @Synchronized
     fun getMemoriesJson(limit: Int = 100): String {
-        if (nativeHandle == 0L && !initialize(null)) {
+        if (nativeHandle == 0L) {
             return "[]"
         }
         return try {
@@ -142,7 +154,7 @@ object AuraEngine {
     /** Store a long-term memory typed by the user. Blocking. {"ok", "error"?}. */
     @Synchronized
     fun saveMemory(content: String): String {
-        if (nativeHandle == 0L && !initialize(null)) {
+        if (nativeHandle == 0L) {
             return """{"ok":false,"error":"engine not initialized"}"""
         }
         return try {
@@ -155,7 +167,7 @@ object AuraEngine {
     /** Delete all long-term memory entries. Blocking. {"ok", "error"?}. */
     @Synchronized
     fun wipeMemories(): String {
-        if (nativeHandle == 0L && !initialize(null)) {
+        if (nativeHandle == 0L) {
             return """{"ok":false,"error":"engine not initialized"}"""
         }
         return try {
@@ -171,7 +183,7 @@ object AuraEngine {
      */
     @Synchronized
     fun getAuditJson(limit: Int = 50): String {
-        if (nativeHandle == 0L && !initialize(null)) {
+        if (nativeHandle == 0L) {
             return "[]"
         }
         return try {
@@ -184,7 +196,7 @@ object AuraEngine {
     /** Clamp and set the agent's planning-iteration budget. Blocking. */
     @Synchronized
     fun setMaxIterations(n: Int) {
-        if (nativeHandle == 0L && !initialize(null)) return
+        if (nativeHandle == 0L) return
         try {
             nativeSetMaxIterations(nativeHandle, n)
         } catch (_: Throwable) {
